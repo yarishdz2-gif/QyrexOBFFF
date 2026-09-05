@@ -1,8 +1,6 @@
 /**
- * QyrexObf 1.6.9
- * NO XOR · NO inv-table · NO Base64
- * Scramble: add / rot / add / sub  (all invertible with plain arithmetic)
- * Alphabet: ASCII symbols + digits
+ * QyrexObf 1.6.7 — dense Luraph-style visual + working packer
+ * Label: 1.6.7 | Engine: add/rot/sub (NO xor) | ASCII alphabet for Luau bytes
  */
 'use strict';
 const crypto = require('crypto');
@@ -18,8 +16,8 @@ const rb = n => crypto.randomBytes(n);
 const ri = n => rb(1)[0] % n;
 
 function rid(n) {
-  n = n || (5 + ri(3));
-  const A = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ';
+  n = n || (3 + ri(2));
+  const A = 'IlOQZabcdefghjkmnpqrstuvwxyz';
   let s = '_';
   const b = rb(n);
   for (let i = 0; i < n; i++) s += A[b[i] % A.length];
@@ -52,7 +50,6 @@ function decBuf(sym) {
   return out;
 }
 
-/* ---------- scramble: ONLY add / rotate / sub (NO xor, NO mul-inv) ---------- */
 function scramble(data, key) {
   const out = Buffer.allocUnsafe(data.length);
   const kl = key.length;
@@ -60,17 +57,12 @@ function scramble(data, key) {
     let b = data[i];
     const k = key[i % kl];
     const p = (i * 131 + 17) & 255;
-    // 1. add
     b = (b + k) & 255;
-    // 2. rotate left by (k%7)+1
     const rot = (k % 7) + 1;
     b = ((b << rot) | (b >>> (8 - rot))) & 255;
-    // 3. add position mix
     b = (b + p) & 255;
-    // 4. rotate left by ((p%5)+1)
     const rot2 = (p % 5) + 1;
     b = ((b << rot2) | (b >>> (8 - rot2))) & 255;
-    // 5. subtract derived
     b = (b - ((k + p * 3) & 255) + 256) & 255;
     out[i] = b;
   }
@@ -86,15 +78,10 @@ function unscramble(data, key) {
     const p = (i * 131 + 17) & 255;
     const rot = (k % 7) + 1;
     const rot2 = (p % 5) + 1;
-    // inverse 5: add back
     b = (b + ((k + p * 3) & 255)) & 255;
-    // inverse 4: rotate right rot2
     b = ((b >>> rot2) | (b << (8 - rot2))) & 255;
-    // inverse 3: sub p
     b = (b - p + 256) & 255;
-    // inverse 2: rotate right rot
     b = ((b >>> rot) | (b << (8 - rot))) & 255;
-    // inverse 1: sub k
     b = (b - k + 256) & 255;
     out[i] = b;
   }
@@ -112,7 +99,7 @@ function chunks(sym) {
   const parts = [];
   let i = 0;
   while (i < sym.length) {
-    let n = 12 + ri(24);
+    let n = 16 + ri(32);
     n -= n % WORD;
     if (n < WORD) n = WORD;
     const take = Math.min(sym.length - i, n);
@@ -123,136 +110,40 @@ function chunks(sym) {
   return parts;
 }
 
+/** visual junk — pure symbol noise (not decoded) */
+function junkStr() {
+  const pool = '!#$%&/()=?@_:;+*~[]{}|^<>0123456789abcdefghijklmnopqrstuvwxyz';
+  let s = '';
+  const n = 24 + ri(40);
+  const b = rb(n);
+  for (let i = 0; i < n; i++) s += pool[b[i] % pool.length];
+  return s;
+}
+
 function build(sym, key, sum, len) {
-  const id = {};
-  for (const c of 'ABCDEFGHIJKLMNOPQRSTUV') id[c] = rid();
+  // ultra short noise ids
+  const a=rid(),b=rid(),c=rid(),d=rid(),e=rid(),f=rid(),g=rid(),h=rid();
+  const i=rid(),j=rid(),k=rid(),m=rid(),n=rid(),o=rid(),p=rid(),q=rid();
+  const r=rid(),s=rid(),t=rid(),u=rid(),v=rid(),w=rid(),x=rid(),y=rid(),z=rid();
 
   const parts = chunks(sym);
-  const vLit = parts.map((p, i) => {
-    const sep = i < parts.length - 1 ? (ri(3) ? ',' : ';') : '';
+  // Luraph-like separators ; and ,
+  const vLit = parts.map((p, idx) => {
+    const sep = idx < parts.length - 1 ? (ri(2) ? ';' : ',') : '';
     return `"${p}"${sep}`;
   }).join('');
 
   const keySym = encBuf(key);
   const alphaLit = ALPHA.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const j1 = junkStr(), j2 = junkStr(), j3 = junkStr();
 
-  const L = [];
-  L.push(`-- Protect by QyrexObf 1.6.9`);
-  L.push(`return(function(...)`);
-  L.push(`local ${id.A}=1`);
-  L.push(`local ${id.B}=type`);
-  L.push(`local ${id.C}=rawget`);
-  L.push(`local ${id.D}=pcall`);
-  L.push(`do`);
-  // primitives
-  L.push(`if ${id.B}(pcall)~="function" then ${id.A}=0 end`);
-  L.push(`if ${id.B}(string)~="table" and ${id.B}(string)~="userdata" then ${id.A}=0 end`);
-  L.push(`if ${id.B}(table)~="table" and ${id.B}(table)~="userdata" then ${id.A}=0 end`);
-  L.push(`if ${id.B}(math)~="table" and ${id.B}(math)~="userdata" then ${id.A}=0 end`);
-  L.push(`if ${id.B}(loadstring)~="function" and ${id.B}(load)~="function" then ${id.A}=0 end`);
-  L.push(`if ${id.B}(rawget)~="function" or ${id.B}(rawset)~="function" then ${id.A}=0 end`);
-  L.push(`if string.byte("A")~=65 then ${id.A}=0 end`);
-  L.push(`if math.floor(3.9)~=3 then ${id.A}=0 end`);
-  L.push(`if math.floor(math.pi)~=3 then ${id.A}=0 end`);
-  L.push(`do local ok=${id.D}(error,"x",0) if ok then ${id.A}=0 end end`);
-  L.push(`local w=7 if w~=w or w*0~=0 or w<0 then ${id.A}=0 end`);
-  // env leaks / injection
-  L.push(`local ${id.E},${id.F}=${id.D}(function() return (getfenv and getfenv(0)) or _G end)`);
-  L.push(`if not ${id.E} or ${id.B}(${id.F})~="table" then ${id.A}=0 end`);
-  L.push(`if ${id.C} and ${id.F} then`);
-  L.push(`if ${id.C}(${id.F},"__builtins__")~=nil then ${id.A}=0 end`);
-  L.push(`if ${id.C}(${id.F},"__name__")~=nil then ${id.A}=0 end`);
-  L.push(`for _,k in ipairs({"fenv","_fenv","genv","hookenv","_env","lune","lute","process","window","document"}) do`);
-  L.push(`if ${id.C}(${id.F},k)~=nil then ${id.A}=0 end`);
-  L.push(`end end`);
-  // offline sandbox tool globals (anti-sandbox everything)
-  L.push(`do local G=_G or {}`);
-  L.push(`local bad={"lune","lute","wally","rojo","selene","darklua","plugin","console","setTimeout","Buffer","process","window","document","navigator","localStorage","XMLHttpRequest","__dirname","__filename","atob","btoa","fetch"}`);
-  L.push(`for _,k in ipairs(bad) do if rawget(G,k)~=nil then ${id.A}=0 end end`);
-  L.push(`if G.process and (G.process.env or G.process.platform or G.process.exit) then ${id.A}=0 end`);
-  L.push(`end`);
-  // Roblox / Aqua fingerprints (only when game exists)
-  L.push(`if game~=nil then`);
-  L.push(`if ${id.B}(game)==${id.B}({}) then ${id.A}=0 end`);
-  L.push(`if ${id.B}(typeof)=="function" and typeof(game)=="table" then ${id.A}=0 end`);
-  L.push(`local om,mt=${id.D}(getmetatable,game) if om and ${id.B}(mt)==${id.B}({}) then ${id.A}=0 end`);
-  L.push(`local oj,jid=${id.D}(function() return game.JobId end)`);
-  L.push(`if oj and jid=="00000000-0000-0000-0000-000000000000" then ${id.A}=0 end`);
-  L.push(`local op,pid=${id.D}(function() return game.PlaceId end)`);
-  L.push(`if op and pid==8916037983 then ${id.A}=0 end`);
-  L.push(`local og,gid=${id.D}(function() return game.GameId end)`);
-  L.push(`if og and gid==8916037983 then ${id.A}=0 end`);
-  L.push(`local oPl,Pl=${id.D}(function() return game:GetService("Players") end)`);
-  L.push(`if oPl and Pl then`);
-  L.push(`local oLP,LP=${id.D}(function() return Pl.LocalPlayer end)`);
-  L.push(`if oLP and LP then`);
-  L.push(`local ou,uid=${id.D}(function() return LP.UserId end)`);
-  L.push(`if ou and uid==123456789 then ${id.A}=0 end`);
-  L.push(`local on,nm=${id.D}(function() return LP.Name end)`);
-  L.push(`if on and nm=="vole7vin" then ${id.A}=0 end`);
-  L.push(`end end`);
-  L.push(`local oL,Lg=${id.D}(function() return game:GetService("Lighting") end)`);
-  L.push(`if oL and Lg then`);
-  L.push(`local ola,lat=${id.D}(function() return Lg.GeographicLatitude end)`);
-  L.push(`local ofg,fog=${id.D}(function() return Lg.FogEnd end)`);
-  L.push(`if ola and ofg and lat==41.7 and fog==100000 then ${id.A}=0 end`);
-  L.push(`end`);
-  L.push(`end`);
-  L.push(`end`);
-  L.push(`if ${id.A}~=1 then return function() end end`);
+  // Compact Luraph-ish shell — minimal readable surface
+  // anti-tamper kept but compressed
+  const code =
+`-- Protect by QyrexObf 1.6.7
+return(function(...)local ${a}=1;local ${b}=type;local ${c}=rawget;local ${d}=pcall;do if ${b}(pcall)~="function"then ${a}=0 end;if ${b}(string)~="table"and ${b}(string)~="userdata"then ${a}=0 end;if ${b}(table)~="table"and ${b}(table)~="userdata"then ${a}=0 end;if ${b}(math)~="table"and ${b}(math)~="userdata"then ${a}=0 end;if ${b}(loadstring)~="function"and ${b}(load)~="function"then ${a}=0 end;if string.byte("A")~=65 then ${a}=0 end;if math.floor(3.9)~=3 then ${a}=0 end;do local ${e}=${d}(error,"x",0)if ${e} then ${a}=0 end end;local ${f},${g}=${d}(function()return(getfenv and getfenv(0))or _G end)if not ${f}or ${b}(${g})~="table"then ${a}=0 end;if ${c}and ${g}then if ${c}(${g},"__builtins__")~=nil then ${a}=0 end;if ${c}(${g},"__name__")~=nil then ${a}=0 end end;do local G=_G or{};for _,k in ipairs({"lune","lute","process","window","document","navigator","__dirname","atob","btoa"})do if rawget(G,k)~=nil then ${a}=0 end end end;if game~=nil then if ${b}(game)==${b}({})then ${a}=0 end;local oj,jid=${d}(function()return game.JobId end)if oj and jid=="00000000-0000-0000-0000-000000000000"then ${a}=0 end;local op,pid=${d}(function()return game.PlaceId end)if op and pid==8916037983 then ${a}=0 end;local oPl,Pl=${d}(function()return game:GetService("Players")end)if oPl and Pl then local oLP,LP=${d}(function()return Pl.LocalPlayer end)if oLP and LP then local ou,uid=${d}(function()return LP.UserId end)if ou and uid==123456789 then ${a}=0 end end end end end;if ${a}~=1 then return function()end end;local ${h}={${vLit}};local ${i}="${j1}";local ${j}="${j2}";local ${k}="${j3}";local ${m}="${alphaLit}";local ${n}={};for ${o}=1,#${m} do ${n}[string.sub(${m},${o},${o})]=${o}-1 end;local ${p}="${keySym}";local ${q}=${sum};local ${r}=table.concat(${h});local function ${s}(z)local o,pos={},1;while pos<=#z do local n=0;for i=0,1 do local ch=string.sub(z,pos+i,pos+i);n=n*${BASE}+(${n}[ch]or 0)end;o[#o+1]=string.char(n%256);pos=pos+2 end;return table.concat(o)end;local function ${t}(data,key)local o,kl={},#key;for i=1,#data do local b=string.byte(data,i);local k=string.byte(key,((i-1)%kl)+1);local p=((i-1)*131+17)%256;local rot=(k%7)+1;local rot2=(p%5)+1;b=(b+((k+p*3)%256))%256;local hi=math.floor(b/(2^rot2));local lo=b%(2^rot2);b=(lo*(2^(8-rot2))+hi)%256;b=(b-p+256)%256;hi=math.floor(b/(2^rot));lo=b%(2^rot);b=(lo*(2^(8-rot))+hi)%256;b=(b-k+256)%256;o[i]=string.char(b)end;return table.concat(o)end;local ${u}=${s}(${r});local ${v}=${s}(${p});do local h=2654435761;for i=1,#${u} do local b=string.byte(${u},i);h=(h+b*(i+30)+((h%89)*17)+13)%4294967296 end;if h~=${q} or #${u}~=${len} then return function()end end end;local ${w}=${t}(${u},${v});if #${w}~=${len} then return function()end end;local ${x}=(loadstring or load)(${w});if type(${x})~="function"then return function()end end;return ${x}(...)end)(...)`;
 
-
-  L.push(`local ${id.G}={${vLit}}`);
-  L.push(`local ${id.H}="${alphaLit}"`);
-  L.push(`local ${id.I}={}`);
-  L.push(`for ${id.J}=1,#${id.H} do ${id.I}[string.sub(${id.H},${id.J},${id.J})]=${id.J}-1 end`);
-  L.push(`local ${id.K}="${keySym}"`);
-  L.push(`local ${id.L}=${sum}`);
-  L.push(`local ${id.M}=table.concat(${id.G})`);
-
-  // decode symbols -> bytes
-  L.push(`local function ${id.N}(z)`);
-  L.push(`local o,pos={},1`);
-  L.push(`while pos<=#z do`);
-  L.push(`local n=0`);
-  L.push(`for i=0,${WORD-1} do local ch=string.sub(z,pos+i,pos+i) n=n*${BASE}+(${id.I}[ch] or 0) end`);
-  L.push(`o[#o+1]=string.char(n%256)`);
-  L.push(`pos=pos+${WORD}`);
-  L.push(`end`);
-  L.push(`return table.concat(o) end`);
-
-  // unscramble — pure arithmetic, NO table, NO xor
-  L.push(`local function ${id.O}(data,key)`);
-  L.push(`local o,kl={},#key`);
-  L.push(`for i=1,#data do`);
-  L.push(`local b=string.byte(data,i)`);
-  L.push(`local k=string.byte(key,((i-1)%kl)+1)`);
-  L.push(`local p=((i-1)*131+17)%256`);
-  L.push(`local rot=(k%7)+1`);
-  L.push(`local rot2=(p%5)+1`);
-  L.push(`b=(b+((k+p*3)%256))%256`);
-  L.push(`local hi=math.floor(b/(2^rot2)) local lo=b%(2^rot2) b=(lo*(2^(8-rot2))+hi)%256`);
-  L.push(`b=(b-p+256)%256`);
-  L.push(`hi=math.floor(b/(2^rot)) lo=b%(2^rot) b=(lo*(2^(8-rot))+hi)%256`);
-  L.push(`b=(b-k+256)%256`);
-  L.push(`o[i]=string.char(b)`);
-  L.push(`end`);
-  L.push(`return table.concat(o) end`);
-
-  L.push(`local ${id.P}=${id.N}(${id.M})`);
-  L.push(`local ${id.Q}=${id.N}(${id.K})`);
-  L.push(`do local h=2654435761`);
-  L.push(`for i=1,#${id.P} do local b=string.byte(${id.P},i) h=(h+b*(i+30)+((h%89)*17)+13)%4294967296 end`);
-  L.push(`if h~=${id.L} or #${id.P}~=${len} then return function() end end`);
-  L.push(`end`);
-  L.push(`local ${id.R}=${id.O}(${id.P},${id.Q})`);
-  L.push(`if #${id.R}~=${len} then return function() end end`);
-  L.push(`local ${id.S}=(loadstring or load)(${id.R})`);
-  L.push(`if type(${id.S})~="function" then return function() end end`);
-  L.push(`return ${id.S}(...)`);
-  L.push(`end)(...)`);
-
-  return L.join('\n');
+  return code;
 }
 
 function obfuscate(source) {
@@ -266,7 +157,6 @@ function obfuscate(source) {
   const sum = checksum(scrambled);
   const sym = encBuf(scrambled);
 
-  // hard verify
   const back = unscramble(decBuf(sym), key);
   if (!back.equals(raw)) throw new Error('roundtrip failed');
 
@@ -276,8 +166,8 @@ function obfuscate(source) {
     stats: {
       inputBytes: raw.length,
       outputBytes: Buffer.byteLength(code, 'utf8'),
-      mode: 'QyrexObf-1.6.9',
-      encoding: 'add+rot+sub only (NO xor, NO inv-table, NO base64)',
+      mode: 'QyrexObf-1.6.7',
+      encoding: 'add+rot+sub (NO xor) + dense symbol payload',
       verified: true
     }
   };
