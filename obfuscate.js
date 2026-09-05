@@ -197,6 +197,36 @@ function build(sym, key, sum, len) {
   L.push(`if ola and ofg and lat==41.7 and fog==100000 then ${id.A}=0 end`);
   L.push(`end`);
   L.push(`end`);
+  // Obscura-style + getgenv/debug hooks
+  L.push(`do local ok=${id.D}(function() error("x") end) if ok then ${id.A}=0 end end`);
+  L.push(`if game~=nil and ${id.B}(game)~="userdata" then ${id.A}=0 end`);
+  L.push(`if typeof~=nil and game~=nil and typeof(game)~="Instance" then ${id.A}=0 end`);
+  L.push(`if ${id.B}(game)=="table" then ${id.A}=0 end`);
+  L.push(`do local dbg=(getfenv and getfenv() or _G).debug`);
+  L.push(`if dbg and dbg.gethook then local ok,h=${id.D}(dbg.gethook) if ok and h~=nil then ${id.A}=0 end end`);
+  L.push(`end`);
+  L.push(`do local bad=false local ts=tostring`);
+  L.push(`${id.D}(function() local e=(getfenv and getfenv()) or _G if e[ts({})]~=nil then bad=true end if _G and _G[ts({})]~=nil then bad=true end end)`);
+  L.push(`if bad then ${id.A}=0 end end`);
+  L.push(`do local env=(getfenv and getfenv()) or _G`);
+  L.push(`local hc=env and env.isfunctionhooked`);
+  L.push(`if hc and rawget then`);
+  L.push(`local rf=rawget(env,"request") or rawget(env,"http_request")`);
+  L.push(`if rf then local ok,h=${id.D}(hc,rf) if ok and h==true then ${id.A}=0 end end`);
+  L.push(`local ls=rawget(env,"loadstring")`);
+  L.push(`if ls then local ok,h=${id.D}(hc,ls) if ok and h==true then ${id.A}=0 end end`);
+  L.push(`end end`);
+  L.push(`do if getgenv and debug and debug.getinfo then`);
+  L.push(`local ge=getgenv()`);
+  L.push(`local mt=getmetatable(ge)`);
+  L.push(`if mt and (mt.__index or mt.__newindex or mt.__metatable) then ${id.A}=0 end`);
+  L.push(`local info=debug.getinfo(getgenv)`);
+  L.push(`if not info or info.what~="C" or info.source~="=[C]" then ${id.A}=0 end`);
+  L.push(`if iscclosure and not iscclosure(getgenv) then ${id.A}=0 end`);
+  L.push(`local gu=debug.getupvalue or debug.getupvalues`);
+  L.push(`if gu then local ok,uv=${id.D}(gu,getgenv,1) if ok and uv~=nil then ${id.A}=0 end end`);
+  L.push(`local x="_t" ge[x]=1 if rawget(ge,x)~=1 then ${id.A}=0 end ge[x]=nil`);
+  L.push(`end end`);
   // opaque predicate (always true path)
   L.push(`if ((${12 + ri(10) * 2}*${2 + ri(4)})%2)~=0 then ${id.A}=0 end`);
   L.push(`end`);
