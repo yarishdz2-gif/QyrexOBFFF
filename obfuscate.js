@@ -111,9 +111,14 @@ function unscramble(data, key) {
 }
 
 function checksum32(buf) {
-  let h = 0x9e3779b1 >>> 0;
+  /* Must match Lua: i is 1-based, h=(h+b*(i+30)+((h%89)*17)+13)%2^32 */
+  let h = 2654435761 >>> 0; // 0x9E3779B1
   for (let i = 0; i < buf.length; i++) {
-    h = (h + ((buf[i] * ((i + 31) | 0)) >>> 0) + ((((h % 89) * 17) + 13) >>> 0)) >>> 0;
+    const b = buf[i] & 255;
+    const idx = i + 1; // Lua 1-based
+    const term = (b * (idx + 30)) >>> 0;
+    const mix = ((((h % 89) * 17) + 13) >>> 0);
+    h = (h + term + mix) >>> 0;
   }
   return h >>> 0;
 }
@@ -190,11 +195,12 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
   const magB = 4 + (ri(2) * 2); // even-ish pattern; (magA*magB)%2 handled carefully
   // canary: ((magA * 4) % 2) == 0 always for integer magA
 
+
   const lines = [];
 
   lines.push('return(function(...)');
 
-  /* ---- hardened integrity + anti-sandbox (safe subset of supplied guards) ---- */
+  /* ---- hardened integrity (score-based; does not silent-abort on soft fails) ---- */
   lines.push(`local ${OK}=true`);
   lines.push(`local ${U}=type`);
   lines.push(`local ${V}=pcall`);
@@ -206,64 +212,54 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
   lines.push(`local ${AA}=math.floor`);
   lines.push(`local ${BB}=loadstring or load`);
   lines.push(`local ${CC}=0`);
-  /* primitive identity */
   lines.push(`if ${U}(string)=="table" and ${U}(${R})=="function" and ${U}(${S})=="function" then ${CC}=${CC}+25 end`);
   lines.push(`if ${U}(table)=="table" and ${U}(${T})=="function" then ${CC}=${CC}+15 end`);
   lines.push(`if ${U}(math)=="table" and ${U}(${AA})=="function" then ${CC}=${CC}+15 end`);
   lines.push(`if ${U}(pcall)=="function" and ${U}(type)=="function" and ${U}(tostring)=="function" then ${CC}=${CC}+20 end`);
   lines.push(`do local a,b=${V}(function() return 214 end) if a and b==214 then ${CC}=${CC}+15 end end`);
   lines.push(`if ((${magA}*4)%2)==0 then ${CC}=${CC}+10 end`);
-  /* pcall(error) must fail */
-  lines.push(`do local a=${V}(error,"\\0",0) if a then ${X}() else ${CC}=${CC}+15 end end`);
-  /* semantic probes */
+  lines.push(`do local a=${V}(error,"\\0",0) if a then ${CC}=${CC}-30 else ${CC}=${CC}+15 end end`);
   lines.push(`if ${R}("A")==65 then ${CC}=${CC}+10 end`);
   lines.push(`if ${AA}(3.9)==3 then ${CC}=${CC}+10 end`);
-  /* tostring of two tables must differ (hook detection) */
-  lines.push(`if ${W}({})~=${W}({}) then ${CC}=${CC}+10 else ${X}() end`);
-  /* game type if present */
-  lines.push(`if game~=nil then if ${U}(game)==${U}({}) then ${X}() elseif typeof and typeof(game)~="Instance" then ${X}() else ${CC}=${CC}+15 end end`);
-  /* analysis env */
-  lines.push(`do local bad=false if ${U}(_G)=="table" then local function has(k) local ok,v=${V}(function() return rawget(_G,k) end) return ok and v~=nil end if has("process") or has("window") or has("document") or has("Buffer") or has("atob") or has("__dirname") or has("lune") or has("lute") or has("rojo") or has("lemur") then bad=true end if has("dofile") or has("loadfile") then bad=true end end if ${U}(io)=="table" and ${U}(io.open)=="function" then bad=true end if ${U}(os)=="table" and ${U}(os.execute)=="function" then bad=true end if bad then ${X}() else ${CC}=${CC}+15 end end`);
-  /* optional sandbox fingerprints */
-  lines.push(`pcall(function() if game and game.JobId=="00000000-0000-0000-0000-000000000000" and game.PlaceId==8916037983 then ${X}() end end)`);
-  /* hook probes on _G */
-  lines.push(`if ${U}(_G)=="table" then local rg=rawget or function(t,k) return t[k] end local rp=rg(_G,"pcall") local rt=rg(_G,"type") if rp~=nil and rp~=pcall then ${CC}=${CC}-80 end if rt~=nil and rt~=type then ${CC}=${CC}-80 end end`);
-  lines.push(`if rawequal then if rawequal(pcall,pcall) and rawequal(type,type) then ${CC}=${CC}+10 else ${CC}=${CC}-40 end end`);
-  lines.push(`if ${CC}<100 then ${X}() end`);
+  lines.push(`do local t1,t2={},{} if ${W}(t1)~=${W}(t2) then ${CC}=${CC}+10 end end`);
+  lines.push(`if game~=nil then if ${U}(game)==${U}({}) then ${CC}=${CC}-50 elseif typeof and typeof(game)~="Instance" then ${CC}=${CC}-50 else ${CC}=${CC}+15 end end`);
+  lines.push(`do local bad=false if ${U}(_G)=="table" then local function has(k) local ok,v=${V}(function() return rawget(_G,k) end) return ok and v~=nil end if has("process") or has("window") or has("document") or has("atob") or has("__dirname") or has("lune") or has("lute") or has("rojo") or has("lemur") then bad=true end if has("dofile") or has("loadfile") then bad=true end end if ${U}(io)=="table" and ${U}(io.open)=="function" then bad=true end if ${U}(os)=="table" and ${U}(os.execute)=="function" then bad=true end if bad then ${CC}=${CC}-80 else ${CC}=${CC}+15 end end`);
+  lines.push(`pcall(function() if game and game.JobId=="00000000-0000-0000-0000-000000000000" and game.PlaceId==8916037983 then ${CC}=${CC}-100 end end)`);
+  lines.push(`if ${U}(_G)=="table" then local rg=rawget or function(t,k) return t[k] end local rp=rg(_G,"pcall") local rt=rg(_G,"type") if rp~=nil and rp~=pcall then ${CC}=${CC}-40 end if rt~=nil and rt~=type then ${CC}=${CC}-40 end end`);
+  lines.push(`if rawequal then if rawequal(pcall,pcall) and rawequal(type,type) then ${CC}=${CC}+10 else ${CC}=${CC}-20 end end`);
+  lines.push(`if ${CC}<60 then ${X}() end`);
   lines.push(`if ${U}(${BB})~="function" then ${X}() end`);
 
   /* ---- decoys (LLM traps) ---- */
-  lines.push(`local ${B}="${luaEsc(j1)}"`);
+  lines.push(`local function ${O}(...) return nil end`);
+  lines.push(`local function ${Q}(...) return ${O}(...) end`);
+  lines.push(`local ${P}="${luaEsc(j1)}"`);
   lines.push(`local ${C}="${luaEsc(j2)}"`);
-  lines.push(`local ${O}="${luaEsc(j3)}"`);
-  lines.push(`local function ${P}(s) local r="" for i=1,#s do r=r..string.char((string.byte(s,i)+13)%256) end return r end`);
-  lines.push(`local function ${Q}(s) return ${P}(${P}(s)) end`);
-  lines.push(`if #${B}<0 then return ${Q}(${C}) end`);
 
-  /* ---- alphabet + payload ---- */
+  /* ---- payload + alphabet ---- */
   lines.push(`local ${A}={${vLit}}`);
   lines.push(`local ${D}="${luaEsc(ALPHA)}"`);
   lines.push(`local ${E}={}`);
-  lines.push(`for ${F}=1,#${D} do ${E}[string.sub(${D},${F},${F})]=${F}-1 end`);
+  lines.push(`for ${F}=1,#${D} do ${E}[${S}(${D},${F},${F})]=${F}-1 end`);
   lines.push(`local ${G}="${luaEsc(keySym)}"`);
   lines.push(`local ${H}=${sumA}`);
   lines.push(`local ${I}=${sumB}`);
-  lines.push(`local ${J}=table.concat(${A})`);
+  lines.push(`local ${J}=${T}(${A})`);
 
-  /* ---- symbol → bytes (safe loops) ---- */
+  /* ---- symbol → bytes ---- */
   lines.push(
-    `local function ${K}(z) local o={} local pos=1 local zlen=#z while pos+1<=zlen do local n=0 local i=0 while i<${WORD} do local ch=${S}(z,pos+i,pos+i) n=n*${BASE}+(${E}[ch] or 0) i=i+1 end o[#o+1]=string.char(n%256) pos=pos+${WORD} end return table.concat(o) end`
+    `local function ${K}(z) local o={} local pos=1 local zlen=#z while pos+1<=zlen do local n=0 local i=0 while i<${WORD} do local ch=${S}(z,pos+i,pos+i) n=n*${BASE}+(${E}[ch] or 0) i=i+1 end o[#o+1]=string.char(n%256) pos=pos+${WORD} end return ${T}(o) end`
   );
 
-  /* ---- reverse scramble in pure Lua arithmetic ---- */
+  /* ---- reverse scramble ---- */
   lines.push(
-    `local function ${L}(data,key) local o={} local kl=#key local dlen=#data local i=1 while i<=dlen do local b=${R}(data,i) local k=${R}(key,((i-1)%kl)+1) local p=((i-1)*131+17)%256 local rot=(k%7)+1 local rot2=(p%5)+1 local mix=((k*3+p*5+(i-1))%256) local x=0 local bb=b local mm=mix local bit=0 while bit<8 do local abit=bb%2 local mbit=mm%2 if abit~=mbit then x=x+(2^bit) end bb=math.floor(bb/2) mm=math.floor(mm/2) bit=bit+1 end b=x b=(b+((k+p*3)%256))%256 local hi=math.floor(b/(2^rot2)) local lo=b%(2^rot2) b=(lo*(2^(8-rot2))+hi)%256 b=(b-p+256)%256 hi=math.floor(b/(2^rot)) lo=b%(2^rot) b=(lo*(2^(8-rot))+hi)%256 b=(b-k+256)%256 o[i]=string.char(b) i=i+1 end return table.concat(o) end`
+    `local function ${L}(data,key) local o={} local kl=#key local dlen=#data local i=1 while i<=dlen do local b=${R}(data,i) local k=${R}(key,((i-1)%kl)+1) local p=((i-1)*131+17)%256 local rot=(k%7)+1 local rot2=(p%5)+1 local mix=((k*3+p*5+(i-1))%256) local x=0 local bb=b local mm=mix local bit=0 while bit<8 do local abit=bb%2 local mbit=mm%2 if abit~=mbit then x=x+(2^bit) end bb=${AA}(bb/2) mm=${AA}(mm/2) bit=bit+1 end b=x b=(b+((k+p*3)%256))%256 local hi=${AA}(b/(2^rot2)) local lo=b%(2^rot2) b=(lo*(2^(8-rot2))+hi)%256 b=(b-p+256)%256 hi=${AA}(b/(2^rot)) lo=b%(2^rot) b=(lo*(2^(8-rot))+hi)%256 b=(b-k+256)%256 o[i]=string.char(b) i=i+1 end return ${T}(o) end`
   );
 
-  /* ---- CF dispatcher ---- */
+  /* ---- CF dispatcher (while true — never silent-exit on OK=false mid-path) ---- */
   lines.push(`local ${ST}=${s0}`);
-  lines.push(`local ${M} local ${N}`);
-  lines.push(`while ${OK} do`);
+  lines.push(`local ${M},${N},${SS}`);
+  lines.push(`while true do`);
   lines.push(`if ${ST}==${s0} then`);
   lines.push(`if ${OK} then ${ST}=${s1} else ${ST}=${sDead} end`);
   lines.push(`elseif ${ST}==${s1} then`);
@@ -273,19 +269,16 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
     `do local h=2654435761 local i=1 local mlen=#${M} while i<=mlen do local b=${R}(${M},i) h=(h+b*(i+30)+((h%89)*17)+13)%4294967296 i=i+1 end if h~=${H} or mlen~=${payloadLen} then ${OK}=false ${ST}=${sDead} else ${ST}=${s2} end end`
   );
   lines.push(`elseif ${ST}==${s2} then`);
-  lines.push(
-    `do local h=2166136261 local i=1 local mlen=#${M} while i<=mlen do h=((h+${R}(${M},i))%4294967296) h=(h*16777619)%4294967296 i=i+1 end if (h%2147483647)~=(${sumB}%2147483647) then end end`
-  );
   lines.push(`${SS}=${L}(${M},${N})`);
   lines.push(`if #${SS}~=${payloadLen} then ${OK}=false ${ST}=${sDead} else ${ST}=${s3} end`);
   lines.push(`elseif ${ST}==${s3} then`);
   lines.push(`local loader=${BB}`);
-  lines.push(`if ${U}(loader)~="function" or not ${OK} then return end`);
+  lines.push(`if ${U}(loader)~="function" then return end`);
   lines.push(`local fn=loader(${SS},"@qyrex")`);
-  lines.push(`if ${U}(fn)~="function" then return end`);
-  lines.push(`return fn(...)`);
+  lines.push(`if ${U}(fn)=="function" then return fn(...) end`);
+  lines.push(`return`);
   lines.push(`elseif ${ST}==${sDead} then`);
-  lines.push(`return ${Q}(${O})`);
+  lines.push(`return`);
   lines.push('else break end');
   lines.push('end');
   lines.push('end)(...)');
