@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Symbolic Overload · Luau Obfuscator</title>
+<meta name="description" content="Ofuscador Luau por mapeo simbolico. Sin Base64, sin XOR."/>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet"/>
+<style>
+:root{
+  --bg:#07070b;--card:#111118;--border:rgba(255,255,255,.08);
+  --fg:#f0f0f5;--muted:#8a8a9a;--accent:#e8e8f0;--accent-fg:#0a0a0f;
+  --ok:#34d399;--danger:#f87171;--radius:14px;
+  --mono:"JetBrains Mono",ui-monospace,monospace;
+  --sans:"Space Grotesk",system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--fg);font-family:var(--sans)}
+body{display:flex;flex-direction:column;min-height:100vh}
+.wrap{max-width:1100px;margin:0 auto;padding:28px 18px 60px;width:100%}
+header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:28px;flex-wrap:wrap}
+.logo{font-weight:700;font-size:22px;letter-spacing:-.02em}
+.logo span{color:var(--muted);font-weight:500;font-size:13px;margin-left:10px}
+.badge{font-size:11px;padding:5px 10px;border-radius:999px;border:1px solid var(--border);color:var(--muted)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column;min-height:420px}
+.card-h{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--border);font-size:13px;color:var(--muted)}
+.card-h b{color:var(--fg);font-weight:600}
+textarea{
+  flex:1;width:100%;border:0;outline:none;resize:none;padding:14px;
+  background:transparent;color:var(--fg);font-family:var(--mono);font-size:12.5px;line-height:1.55;
+}
+.bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:16px 0}
+button{
+  appearance:none;border:0;border-radius:10px;padding:11px 18px;font-weight:600;font-size:14px;
+  font-family:inherit;cursor:pointer;transition:transform .15s,opacity .15s;
+}
+button:active{transform:scale(.98)}
+button:disabled{opacity:.5;cursor:not-allowed}
+.btn-primary{background:var(--accent);color:var(--accent-fg)}
+.btn-ghost{background:transparent;color:var(--fg);border:1px solid var(--border)}
+.stats{font-size:12px;color:var(--muted);font-family:var(--mono)}
+.stats b{color:var(--ok)}
+.toast{position:fixed;top:18px;right:18px;background:#16161f;border:1px solid var(--border);padding:12px 16px;border-radius:10px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:50}
+.toast.show{opacity:1}
+.toast.err{border-color:rgba(248,113,113,.4);color:var(--danger)}
+.toast.ok{border-color:rgba(52,211,153,.35);color:var(--ok)}
+footer{margin-top:28px;font-size:12px;color:var(--muted);text-align:center;line-height:1.6}
+code{font-family:var(--mono);font-size:11px;background:rgba(255,255,255,.05);padding:2px 6px;border-radius:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">Symbolic Overload <span>Luau · ! # $ % &amp; / ( ) = ? ¡</span></div>
+    <div class="badge">no Base64 · no XOR · base-12 symbols</div>
+  </header>
+
+  <div class="bar">
+    <button class="btn-primary" id="runBtn" onclick="runObf()">Ofuscar</button>
+    <button class="btn-ghost" onclick="copyOut()">Copiar output</button>
+    <button class="btn-ghost" onclick="clearAll()">Limpiar</button>
+    <div class="stats" id="stats">—</div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="card-h"><b>Input</b> <span>Luau source</span></div>
+      <textarea id="src" spellcheck="false" placeholder="-- pega tu script Luau aqui
+print(&quot;hola&quot;)
+local n = 0
+for i = 1, 10 do n = n + i end
+print(n)"></textarea>
+    </div>
+    <div class="card">
+      <div class="card-h"><b>Output</b> <span>symbolic payload</span></div>
+      <textarea id="out" spellcheck="false" readonly placeholder="el resultado aparece aqui..."></textarea>
+    </div>
+  </div>
+
+  <footer>
+    Mapeo simbolico cerrado · scramble aritmetico · anti-tamper ligero<br/>
+    API: <code>POST /api/obfuscate</code> · body <code>{"source":"..."}</code>
+  </footer>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+const src = document.getElementById('src');
+const out = document.getElementById('out');
+const stats = document.getElementById('stats');
+const btn = document.getElementById('runBtn');
+const toastEl = document.getElementById('toast');
+
+function toast(msg, kind) {
+  toastEl.textContent = msg;
+  toastEl.className = 'toast show ' + (kind || '');
+  setTimeout(() => toastEl.classList.remove('show'), 2200);
+}
+
+async function runObf() {
+  const source = src.value;
+  if (!source.trim()) { toast('Pega un script', 'err'); return; }
+  btn.disabled = true;
+  stats.textContent = 'ofuscando...';
+  try {
+    const r = await fetch('/api/obfuscate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Error');
+    out.value = d.code;
+    const s = d.stats || {};
+    stats.innerHTML = '<b>' + (s.inputBytes||0) + '</b> → <b>' + (s.outputBytes||0) + '</b> bytes · ' + (s.mode||'');
+    toast('Listo', 'ok');
+  } catch (e) {
+    toast(e.message || 'Error', 'err');
+    stats.textContent = 'error';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function copyOut() {
+  if (!out.value) { toast('Nada que copiar', 'err'); return; }
+  navigator.clipboard.writeText(out.value).then(() => toast('Copiado', 'ok')).catch(() => toast('No se pudo copiar', 'err'));
+}
+
+function clearAll() {
+  src.value = '';
+  out.value = '';
+  stats.textContent = '—';
+}
+</script>
+</body>
+</html>
