@@ -298,12 +298,24 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
   lines.push(`${SS}=${L}(${M},${N})`);
   lines.push(`do local ls=${K}(${B}) local lv=${R}(ls,1)*16777216+${R}(ls,2)*65536+${R}(ls,3)*256+${R}(ls,4) if #${SS}~=lv then ${OK}=false ${ST}="${sDead}" else ${ST}="${s3}" end end`);
   lines.push(`elseif ${ST}=="${s3}" then`);
-  lines.push(`local loader=${BB}`);
-  lines.push(`if ${U}(loader)~=${ES}("${e('function')}") and ${U}(loader)~="function" then return end`);
-  lines.push(`local fn=loader(${SS})`);
-  // anti-dump: wipe payload string after compile
-  lines.push(`${SS}=nil ${M}=nil ${J}=nil`);
-  lines.push(`if ${U}(fn)==${ES}("${e('function')}") or ${U}(fn)=="function" then local r=fn(...) fn=nil return r end`);
+  /* anti-hook: detect loadstring wrappers (newcclosure dumpers) */
+  lines.push(`do local loader=${BB} local hooked=false`);
+  lines.push(`if iscclosure and loader and not iscclosure(loader) then hooked=true end`);
+  lines.push(`pcall(function() local s=${W}(loader) if s and not string.find(s,"function:") and not string.find(s,"builtin") then hooked=true end end)`);
+  lines.push(`if hooked then local alt=load if ${U}(alt)=="function" and alt~=loader then loader=alt else ${SS}=nil return end end`);
+  /* flood dumpers that capture #s>1000 with decoy payloads */
+  lines.push(`pcall(function() for i=1,12 do local decoy=string.rep("--"..tostring(i*97+13).."\\n",80) if #decoy>1000 then loader(decoy) end end end)`);
+  /* execute real payload via char-table reassembly to frustrate simple string grabs */
+  lines.push(`local fn`);
+  lines.push(`do local bytes={} for i=1,#${SS} do bytes[i]=${R}(${SS},i) end ${SS}=nil`);
+  lines.push(`local parts={} local buf={} local bi=0 local LIM=750`);
+  lines.push(`for i=1,#bytes do bi=bi+1 buf[bi]=string.char(bytes[i]) if bi>=LIM then parts[#parts+1]=table.concat(buf) buf={} bi=0 end end`);
+  lines.push(`if bi>0 then parts[#parts+1]=table.concat(buf) end`);
+  lines.push(`bytes=nil buf=nil`);
+  lines.push(`local src=table.concat(parts) parts=nil`);
+  lines.push(`fn=loader(src) src=nil end`);
+  lines.push(`${M}=nil ${J}=nil ${N}=nil`);
+  lines.push(`if ${U}(fn)=="function" then local r=fn(...) fn=nil return r end`);
   lines.push(`return`);
   lines.push(`elseif ${ST}=="${sDead}" then`);
   lines.push(`return`);
