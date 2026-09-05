@@ -21,7 +21,6 @@ const WORD = 2; // 2 symbols per byte (BASE^2 >= 256)
 const rb = (n) => crypto.randomBytes(n);
 const ri = (n) => crypto.randomInt(0, n);
 
-let _ridSeq = 1;
 function rstate(n) {
   const len = n || (3 + ri(2));
   let s = '';
@@ -29,9 +28,11 @@ function rstate(n) {
   return s;
 }
 function rid(len) {
-  /* valid Lua name with ZERO digits/letters: pure underscores, unique length */
-  _ridSeq += 1;
-  return '_'.repeat(_ridSeq + 2);
+  const n = len || 6 + ri(5);
+  const chars = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ0123456789';
+  let s = '_';
+  for (let i = 0; i < n; i++) s += chars[ri(chars.length)];
+  return s;
 }
 
 function encByte(b) {
@@ -211,7 +212,7 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
 
   lines.push('return(function(...)');
 
-  /* ---- hardened integrity (score-based; does not silent-abort on soft fails) ---- */
+  /* ---- hardened integrity + anti-sandbox (Aqua / dtc / hook suite, score-based) ---- */
   lines.push(`local ${OK}=true`);
   lines.push(`local ${U}=type`);
   lines.push(`local ${V}=pcall`);
@@ -222,23 +223,37 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
   lines.push(`local ${T}=table.concat`);
   lines.push(`local ${AA}=math.floor`);
   lines.push(`local ${BB}=loadstring or load`);
-  lines.push(`local ${CC}=#""`);
-  lines.push(`if ${U}(string)=="table" and ${U}(${R})=="function" and ${U}(${S})=="function" then ${CC}=${CC}+#"~~~~~~~~~~~~~~~~~~~~~~~~~" end`);
-  lines.push(`if ${U}(table)=="table" and ${U}(${T})=="function" then ${CC}=${CC}+#"~~~~~~~~~~~~~~~" end`);
-  lines.push(`if ${U}(math)=="table" and ${U}(${AA})=="function" then ${CC}=${CC}+#"~~~~~~~~~~~~~~~" end`);
-  lines.push(`if ${U}(pcall)=="function" and ${U}(type)=="function" and ${U}(tostring)=="function" then ${CC}=${CC}+#"~~~~~~~~~~~~~~~~~~~~" end`);
-  lines.push(`do local a,b=${V}(function() return #"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" end) if a and b==#"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" then ${CC}=${CC}+#"~~~~~~~~~~~~~~~" end end`);
-  lines.push(`if (#"~~~~")%(#"~~")==#"" then ${CC}=${CC}+#"~~~~~~~~~~" end`);
-  lines.push(`do local a=${V}(error,"\\0",0) if a then ${CC}=${CC}-#"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" else ${CC}=${CC}+#"~~~~~~~~~~~~~~~" end end`);
-  lines.push(`if ${R}("A")==#"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" then ${CC}=${CC}+#"~~~~~~~~~~" end`);
-  lines.push(`if ${AA}((#"~~~~~~~")/(#"~~"))==#"!!!" then ${CC}=${CC}+#"~~~~~~~~~~" end`);
-  lines.push(`do local t1,t2={},{} if ${W}(t1)~=${W}(t2) then ${CC}=${CC}+#"~~~~~~~~~~" end end`);
-  lines.push(`if game~=nil then if ${U}(game)==${U}({}) then ${CC}=${CC}-#"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" elseif typeof and typeof(game)~="Instance" then ${CC}=${CC}-#"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" else ${CC}=${CC}+#"~~~~~~~~~~~~~~~" end end`);
-  lines.push(`do local bad=false if ${U}(_G)=="table" then local function has(k) local ok,v=${V}(function() return rawget(_G,k) end) return ok and v~=nil end if has("process") or has("window") or has("document") or has("atob") or has("__dirname") or has("lune") or has("lute") or has("rojo") or has("lemur") then bad=true end if has("dofile") or has("loadfile") then bad=true end end if ${U}(io)=="table" and ${U}(io.open)=="function" then bad=true end if ${U}(os)=="table" and ${U}(os.execute)=="function" then bad=true end if bad then ${CC}=${CC}-#"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" else ${CC}=${CC}+#"~~~~~~~~~~~~~~~" end end`);
-  lines.push(`pcall(function() if game and game.JobId=="~~~~~~~~~~~~~~~~" then ${CC}=${CC}-#"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" end end)`);
-  lines.push(`if ${U}(_G)=="table" then local rg=rawget or function(t,k) return t[k] end local rp=rg(_G,"pcall") local rt=rg(_G,"type") if rp~=nil and rp~=pcall then ${CC}=${CC}-#"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" end if rt~=nil and rt~=type then ${CC}=${CC}-#"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" end end`);
-  lines.push(`if rawequal then if rawequal(pcall,pcall) and rawequal(type,type) then ${CC}=${CC}+#"~~~~~~~~~~" else ${CC}=${CC}-#"~~~~~~~~~~~~~~~~~~~~" end end`);
-  lines.push(`if ${CC}<#"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" then ${X}() end`);
+  lines.push(`local ${CC}=0`);
+  /* primitives */
+  lines.push(`if ${U}(string)=="table" and ${U}(${R})=="function" and ${U}(${S})=="function" then ${CC}=${CC}+20 end`);
+  lines.push(`if ${U}(table)=="table" and ${U}(${T})=="function" then ${CC}=${CC}+10 end`);
+  lines.push(`if ${U}(math)=="table" and ${U}(${AA})=="function" then ${CC}=${CC}+10 end`);
+  lines.push(`if ${U}(pcall)=="function" and ${U}(type)=="function" and ${U}(tostring)=="function" then ${CC}=${CC}+15 end`);
+  lines.push(`do local a,b=${V}(function() return 214 end) if a and b==214 then ${CC}=${CC}+10 end end`);
+  lines.push(`if ((42*4)%2)==0 then ${CC}=${CC}+5 end`);
+  lines.push(`do local a=${V}(error,"\\0",0) if a then ${CC}=${CC}-25 else ${CC}=${CC}+10 end end`);
+  lines.push(`if ${R}("A")==65 then ${CC}=${CC}+10 end`);
+  lines.push(`if ${AA}(3.9)==3 then ${CC}=${CC}+10 end`);
+  lines.push(`if ${AA}(math.pi)==3 then ${CC}=${CC}+10 end`);
+  lines.push(`do local t1,t2={},{} if ${W}(t1)~=${W}(t2) then ${CC}=${CC}+8 end end`);
+  /* bit32 optional (Aqua) */
+  lines.push(`if bit32 and ${U}(bit32.bxor)=="function" then if bit32.bxor(85,170)==255 then ${CC}=${CC}+8 else ${CC}=${CC}-20 end end`);
+  /* game / typeof (Aqua) */
+  lines.push(`if game~=nil then if ${U}(game)==${U}({}) then ${CC}=${CC}-40 elseif typeof and typeof(game)~="Instance" then ${CC}=${CC}-40 else ${CC}=${CC}+12 end end`);
+  lines.push(`do local ok,mt=${V}(getmetatable,game) if ok and ${U}(mt)==${U}({}) then ${CC}=${CC}-30 end end`);
+  /* sandbox env (dtc subset + extra) */
+  lines.push(`do local bad=false if ${U}(_G)=="table" then local function has(k) local ok,v=${V}(function() return rawget(_G,k) end) return ok and v~=nil end if has("process") or has("window") or has("document") or has("atob") or has("btoa") or has("__dirname") or has("__filename") or has("lune") or has("lute") or has("rojo") or has("lemur") or has("wally") or has("selene") or has("darklua") or has("busted") or has("Buffer") or has("navigator") or has("localStorage") or has("XMLHttpRequest") then bad=true end if has("dofile") or has("loadfile") then bad=true end end if ${U}(io)=="table" and ${U}(io.open)=="function" then bad=true end if ${U}(os)=="table" and ${U}(os.execute)=="function" then bad=true end if bad then ${CC}=${CC}-70 else ${CC}=${CC}+12 end end`);
+  /* JobId / PlaceId sandbox fingerprints (Aqua) */
+  lines.push(`pcall(function() if game and game.JobId=="00000000-0000-0000-0000-000000000000" then ${CC}=${CC}-50 end end)`);
+  lines.push(`pcall(function() if game and (game.PlaceId==8916037983 or game.GameId==8916037983) then ${CC}=${CC}-50 end end)`);
+  /* LocalPlayer soft presence (Roblox real env) */
+  lines.push(`pcall(function() local P=game:GetService("Players") if P and P.LocalPlayer then ${CC}=${CC}+10 if P.LocalPlayer.UserId==123456789 or P.LocalPlayer.Name=="vole7vin" then ${CC}=${CC}-50 end end end)`);
+  /* hook probes on _G */
+  lines.push(`if ${U}(_G)=="table" then local rg=rawget or function(t,k) return t[k] end local rp=rg(_G,"pcall") local rt=rg(_G,"type") local rl=rg(_G,"loadstring") if rp~=nil and rp~=pcall then ${CC}=${CC}-35 end if rt~=nil and rt~=type then ${CC}=${CC}-35 end if rl~=nil and ${BB}~=nil and rl~=${BB} then ${CC}=${CC}-25 end end`);
+  lines.push(`if rawequal then if rawequal(pcall,pcall) and rawequal(type,type) then ${CC}=${CC}+8 else ${CC}=${CC}-15 end end`);
+  /* native-ish tostring of loadstring */
+  lines.push(`do local ls=${BB} if ${U}(ls)=="function" then local s=${W}(ls) if s and (string.find(s,"function: 0x") or string.find(s,"builtin") or string.find(s,"function: ")) then ${CC}=${CC}+8 end end end`);
+  lines.push(`if ${CC}<55 then ${X}() end`);
   lines.push(`if ${U}(${BB})~="function" then ${X}() end`);
 
   /* ---- decoys (LLM traps) ---- */
@@ -332,7 +347,7 @@ function obfuscate(source) {
         'chaotic-alphabet',
         'multi-round-scramble',
         'dual-integrity-hash',
-        'score-anti-tamper','frozen-refs','hook-probes','anti-sandbox',
+        'score-anti-tamper','aqua-primitives','sandbox-dtc','hook-probes','frozen-refs',
         'cf-dispatcher',
         'llm-decoys'
       ],
