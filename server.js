@@ -12,7 +12,7 @@ app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, name: 'Symbolic Overload', version: '1.0.0' });
+  res.json({ ok: true, name: 'QyrexObf', version: '1.6.7' });
 });
 
 app.post('/api/obfuscate', (req, res) => {
@@ -36,5 +36,5 @@ app.get('*', (_req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log('Symbolic Overload listening on', PORT);
+  console.log('QyrexObf listening on', PORT);
 });
