@@ -1,5 +1,5 @@
 /**
- * QyrexObf 1.6.8
+ * QyrexObf 1.6.9
  * NO XOR · NO inv-table · NO Base64
  * Scramble: add / rot / add / sub  (all invertible with plain arithmetic)
  * Alphabet: ASCII symbols + digits
@@ -137,36 +137,70 @@ function build(sym, key, sum, len) {
   const alphaLit = ALPHA.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 
   const L = [];
-  L.push(`-- Protect by QyrexObf 1.6.8`);
+  L.push(`-- Protect by QyrexObf 1.6.9`);
   L.push(`return(function(...)`);
   L.push(`local ${id.A}=1`);
   L.push(`local ${id.B}=type`);
   L.push(`local ${id.C}=rawget`);
   L.push(`local ${id.D}=pcall`);
   L.push(`do`);
+  // primitives
   L.push(`if ${id.B}(pcall)~="function" then ${id.A}=0 end`);
   L.push(`if ${id.B}(string)~="table" and ${id.B}(string)~="userdata" then ${id.A}=0 end`);
   L.push(`if ${id.B}(table)~="table" and ${id.B}(table)~="userdata" then ${id.A}=0 end`);
   L.push(`if ${id.B}(math)~="table" and ${id.B}(math)~="userdata" then ${id.A}=0 end`);
   L.push(`if ${id.B}(loadstring)~="function" and ${id.B}(load)~="function" then ${id.A}=0 end`);
+  L.push(`if ${id.B}(rawget)~="function" or ${id.B}(rawset)~="function" then ${id.A}=0 end`);
   L.push(`if string.byte("A")~=65 then ${id.A}=0 end`);
   L.push(`if math.floor(3.9)~=3 then ${id.A}=0 end`);
+  L.push(`if math.floor(math.pi)~=3 then ${id.A}=0 end`);
   L.push(`do local ok=${id.D}(error,"x",0) if ok then ${id.A}=0 end end`);
+  L.push(`local w=7 if w~=w or w*0~=0 or w<0 then ${id.A}=0 end`);
+  // env leaks / injection
   L.push(`local ${id.E},${id.F}=${id.D}(function() return (getfenv and getfenv(0)) or _G end)`);
   L.push(`if not ${id.E} or ${id.B}(${id.F})~="table" then ${id.A}=0 end`);
   L.push(`if ${id.C} and ${id.F} then`);
   L.push(`if ${id.C}(${id.F},"__builtins__")~=nil then ${id.A}=0 end`);
   L.push(`if ${id.C}(${id.F},"__name__")~=nil then ${id.A}=0 end`);
+  L.push(`for _,k in ipairs({"fenv","_fenv","genv","hookenv","_env","lune","lute","process","window","document"}) do`);
+  L.push(`if ${id.C}(${id.F},k)~=nil then ${id.A}=0 end`);
+  L.push(`end end`);
+  // offline sandbox tool globals (anti-sandbox everything)
+  L.push(`do local G=_G or {}`);
+  L.push(`local bad={"lune","lute","wally","rojo","selene","darklua","plugin","console","setTimeout","Buffer","process","window","document","navigator","localStorage","XMLHttpRequest","__dirname","__filename","atob","btoa","fetch"}`);
+  L.push(`for _,k in ipairs(bad) do if rawget(G,k)~=nil then ${id.A}=0 end end`);
+  L.push(`if G.process and (G.process.env or G.process.platform or G.process.exit) then ${id.A}=0 end`);
   L.push(`end`);
+  // Roblox / Aqua fingerprints (only when game exists)
   L.push(`if game~=nil then`);
   L.push(`if ${id.B}(game)==${id.B}({}) then ${id.A}=0 end`);
+  L.push(`if ${id.B}(typeof)=="function" and typeof(game)=="table" then ${id.A}=0 end`);
+  L.push(`local om,mt=${id.D}(getmetatable,game) if om and ${id.B}(mt)==${id.B}({}) then ${id.A}=0 end`);
   L.push(`local oj,jid=${id.D}(function() return game.JobId end)`);
   L.push(`if oj and jid=="00000000-0000-0000-0000-000000000000" then ${id.A}=0 end`);
   L.push(`local op,pid=${id.D}(function() return game.PlaceId end)`);
   L.push(`if op and pid==8916037983 then ${id.A}=0 end`);
+  L.push(`local og,gid=${id.D}(function() return game.GameId end)`);
+  L.push(`if og and gid==8916037983 then ${id.A}=0 end`);
+  L.push(`local oPl,Pl=${id.D}(function() return game:GetService("Players") end)`);
+  L.push(`if oPl and Pl then`);
+  L.push(`local oLP,LP=${id.D}(function() return Pl.LocalPlayer end)`);
+  L.push(`if oLP and LP then`);
+  L.push(`local ou,uid=${id.D}(function() return LP.UserId end)`);
+  L.push(`if ou and uid==123456789 then ${id.A}=0 end`);
+  L.push(`local on,nm=${id.D}(function() return LP.Name end)`);
+  L.push(`if on and nm=="vole7vin" then ${id.A}=0 end`);
+  L.push(`end end`);
+  L.push(`local oL,Lg=${id.D}(function() return game:GetService("Lighting") end)`);
+  L.push(`if oL and Lg then`);
+  L.push(`local ola,lat=${id.D}(function() return Lg.GeographicLatitude end)`);
+  L.push(`local ofg,fog=${id.D}(function() return Lg.FogEnd end)`);
+  L.push(`if ola and ofg and lat==41.7 and fog==100000 then ${id.A}=0 end`);
+  L.push(`end`);
   L.push(`end`);
   L.push(`end`);
   L.push(`if ${id.A}~=1 then return function() end end`);
+
 
   L.push(`local ${id.G}={${vLit}}`);
   L.push(`local ${id.H}="${alphaLit}"`);
@@ -242,7 +276,7 @@ function obfuscate(source) {
     stats: {
       inputBytes: raw.length,
       outputBytes: Buffer.byteLength(code, 'utf8'),
-      mode: 'QyrexObf-1.6.8',
+      mode: 'QyrexObf-1.6.9',
       encoding: 'add+rot+sub only (NO xor, NO inv-table, NO base64)',
       verified: true
     }
