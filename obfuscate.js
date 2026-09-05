@@ -14,7 +14,7 @@ const MAX_BYTES = 1_500_000;
 
 /* ASCII-only alphabet (1 byte/char). Multi-byte UTF-8 breaks Luau string.sub byte indexing. */
 const ALPHA =
-  '!#$%&()*+,-./:;<=>?@[]^_{|}~';
+  "!#$%&()*+,-./:;<=>?@[]^_{|}~'`";
 const BASE = ALPHA.length; // must be constant
 const WORD = 2; // 2 symbols per byte (BASE^2 >= 256)
 
