@@ -1,6 +1,6 @@
 {
   "name": "qyrexobf",
-  "version": "2.1.0",
+  "version": "1.0.0",
   "description": "QyrexObf — hardened Lua/Luau obfuscation server (zero-error loader)",
   "main": "server.js",
   "scripts": {
