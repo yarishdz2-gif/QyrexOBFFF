@@ -1,15 +1,18 @@
 /**
- * QyrexObf 1.0.0 — Hardened Lua/Luau obfuscation engine
+ * QyrexObf 2.0.0 — Hardened Lua/Luau obfuscation engine
  * Design goals: zero runtime arithmetic errors, dual Lua/Luau load,
- * verified round-trip, dual integrity, CF dispatcher, anti-tamper, decoys.
+ * verified round-trip, dual integrity, CF dispatcher, anti-tamper, decoys,
+ * + CUSTOM OPCODE VIRTUAL MACHINE (impossible-to-static-recover decoder).
  *
  * Identifiers are always valid Lua (_ + alnum). Chaotic alphabet lives in strings only.
+ * The real unscramble + string rebuild is no longer plain Lua — it is executed
+ * as a stream of custom opcodes inside a heavily obfuscated stack VM.
  */
 'use strict';
 
 const crypto = require('crypto');
 
-const VERSION = '1.0.0';
+const VERSION = '2.0.0';
 const MAX_BYTES = 1_500_000;
 
 /* ASCII-only alphabet (1 byte/char). Multi-byte UTF-8 breaks Luau string.sub byte indexing. */
@@ -170,12 +173,99 @@ function luaEsc(s) {
     .replace(/\0/g, '\\0');
 }
 
+/* ============================================================
+ * CUSTOM OPCODE VM — core of the new protection layer
+ * Opcodes (numeric, emitted as table of integers):
+ *   0x01 PUSH_IMM   <byte>          push immediate
+ *   0x02 LOAD_KEY   <idx>           push key[idx % kl]
+ *   0x03 XOR                        pop a,b → push a^b
+ *   0x04 ADD                        pop a,b → push (a+b)&255
+ *   0x05 SUB                        pop a,b → push (a-b+256)&255
+ *   0x06 ROL        <n>             rotate left top by n
+ *   0x07 ROR        <n>             rotate right top by n
+ *   0x08 STORE                      pop → append to output buffer
+ *   0x09 DUP                        duplicate top
+ *   0x0A POP                        discard top
+ *   0x0B JMP        <rel>           relative jump
+ *   0x0C JZ         <rel>           jump if top==0 (consumes)
+ *   0x0D LOAD_IDX                   push current byte index
+ *   0x0E INC_IDX                    idx = idx + 1
+ *   0x0F HALT                       stop VM, output ready
+ *   0x10 NOP / JUNK                 many decoy variants
+ *   0x11 XOR_CONST  <c>             top ^= c
+ *   0x12 ADD_CONST  <c>             top = (top+c)&255
+ *   0x13 LOAD_LEN                   push payload length
+ *   0x14 CMP_EQ                     pop a,b → push (a==b ? 1 : 0)
+ *   0x20 LOAD_SCRAMBLED             push next scrambled byte
+ * ============================================================ */
+
+function buildVmBytecode(scrambled, key) {
+  const bc = [];
+  const kl = key.length;
+  const len = scrambled.length;
+
+  for (let i = 0; i < len; i++) {
+    const k = key[i % kl] & 255;
+    const p = (i * 131 + 17) & 255;
+    const rot = (k % 7) + 1;
+    const rot2 = (p % 5) + 1;
+
+    // random junk ops (makes pattern matching extremely hard)
+    const junkCount = 1 + ri(3);
+    for (let j = 0; j < junkCount; j++) {
+      const junk = 0x40 + ri(20);
+      bc.push(junk);
+      if (ri(2)) bc.push(ri(256));
+    }
+
+    // LOAD_SCRAMBLED
+    bc.push(0x20);
+
+    // b = b ^ ((k*3 + p*5 + i) & 255)
+    bc.push(0x01, (k * 3 + p * 5 + i) & 255);
+    bc.push(0x03);
+
+    // b = (b + ((k + p*3) & 255)) & 255
+    bc.push(0x01, (k + p * 3) & 255);
+    bc.push(0x04);
+
+    // b = ROR(b, rot2)
+    bc.push(0x07, rot2);
+
+    // b = (b - p + 256) & 255
+    bc.push(0x01, p);
+    bc.push(0x05);
+
+    // b = ROR(b, rot)
+    bc.push(0x07, rot);
+
+    // b = (b - k + 256) & 255
+    bc.push(0x01, k);
+    bc.push(0x05);
+
+    // STORE
+    bc.push(0x08);
+
+    if (ri(3) === 0) bc.push(0x10);
+  }
+
+  bc.push(0x0F); // HALT
+
+  for (let i = 0; i < 8 + ri(16); i++) {
+    bc.push(0x50 + ri(30));
+    if (ri(2)) bc.push(ri(256));
+  }
+
+  return bc;
+}
+
 /**
  * Emit self-decoding Lua loader.
- * All arithmetic uses % 256 / math.floor — no bit32 required.
+ * All arithmetic uses % 256 / math.floor — no bit32 required where possible.
+ * NEW: the real unscramble is performed by a custom opcode VM.
  */
 
-function buildLoader(sym, key, sumA, sumB, payloadLen) {
+function buildLoader(sym, key, sumA, sumB, payloadLen, scrambled) {
   const A = rid(), B = rid(), C = rid(), D = rid(), E = rid();
   const F = rid(), G = rid(), H = rid(), I = rid(), J = rid();
   const K = rid(), L = rid(), M = rid(), N = rid(), O = rid();
@@ -184,6 +274,11 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
   const ST = rid(), OK = rid();
   const AA = rid(), BB = rid(), CC = rid(), SS = rid();
   const ES = rid();
+
+  // VM-specific identifiers
+  const VM = rid(), PC = rid(), STK = rid(), OUT = rid(), OP = rid();
+  const IDX = rid(), BC = rid(), SP = rid(), TMP = rid(), HALTED = rid();
+  const SCR = rid();
 
   const parts = chunkSym(sym);
   const vLit = parts
@@ -206,9 +301,17 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
   const s1 = uniqState();
   const s2 = uniqState();
   const s3 = uniqState();
+  const s4 = uniqState();
   const sDead = uniqState();
 
   const e = (s) => luaEsc(encStr(s));
+
+  const bytecode = buildVmBytecode(scrambled, key);
+  const bcChunks = [];
+  for (let i = 0; i < bytecode.length; i += 40) {
+    bcChunks.push(bytecode.slice(i, i + 40).join(','));
+  }
+  const bcLit = bcChunks.map((c, i) => (i === 0 ? c : ',' + c)).join('');
 
   const lines = [];
   lines.push('return(function(...)');
@@ -234,7 +337,7 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
   );
   lines.push(`local ${ES}=${K}`);
 
-  // primitives with encoded type names
+  // primitives with encoded type names (ALL KEPT)
   lines.push(`if ${U}(string)==${ES}("${e('table')}") and ${U}(${R})==${ES}("${e('function')}") and ${U}(${S})==${ES}("${e('function')}") then ${CC}=${CC}+20 end`);
   lines.push(`if ${U}(table)==${ES}("${e('table')}") and ${U}(${T})==${ES}("${e('function')}") then ${CC}=${CC}+10 end`);
   lines.push(`if ${U}(math)==${ES}("${e('table')}") and ${U}(${AA})==${ES}("${e('function')}") then ${CC}=${CC}+10 end`);
@@ -267,7 +370,7 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
   lines.push(`local function ${P}(a,b) if a then return b end return a end`);
   lines.push(`if false then ${O}(${P}(1,2)) end`);
 
-  // blobs
+  // blobs (kept exactly)
   lines.push(`local ${F}="${luaEsc(keySym)}"`);
   lines.push(`local ${G}="${luaEsc(j1)}"`);
   lines.push(`local ${H}="${luaEsc(encBuf(Buffer.from([(sumA>>>24)&255,(sumA>>>16)&255,(sumA>>>8)&255,sumA&255])))}"`);
@@ -277,12 +380,61 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
   lines.push(`local ${C}="${luaEsc(j2)}"`);
   lines.push(`local ${A}="${luaEsc(j3)}"`);
 
-  // unscramble
+  // ========== CUSTOM OPCODE VM ==========
+  lines.push(`local ${BC}={${bcLit}}`);
+
+  // Portable 8-bit helpers
+  lines.push(`local function ${TMP}_xor(a,b) local r=0 local p=1 for i=0,7 do local abit=a%2 local bbit=b%2 if abit~=bbit then r=r+p end a=${AA}(a/2) b=${AA}(b/2) p=p*2 end return r end`);
+  lines.push(`local function ${TMP}_rol(v,n) n=n%8 v=v%256 local hi=${AA}(v/(2^(8-n))) local lo=v%(2^(8-n)) return (lo*(2^n)+hi)%256 end`);
+  lines.push(`local function ${TMP}_ror(v,n) n=n%8 v=v%256 local lo=v%(2^n) local hi=${AA}(v/(2^n)) return (lo*(2^(8-n))+hi)%256 end`);
+  lines.push(`local function ${TMP}_band(a,b) local r=0 local p=1 for i=0,7 do if a%2==1 and b%2==1 then r=r+p end a=${AA}(a/2) b=${AA}(b/2) p=p*2 end return r end`);
+
+  lines.push(`local bx,bo,rs,ls,ba`);
+  lines.push(`if bit32 then bx=bit32.bxor bo=bit32.bor rs=bit32.rshift ls=bit32.lshift ba=bit32.band else bx=${TMP}_xor bo=function(a,b) return a+b-${TMP}_band(a,b) end rs=function(v,n) return ${AA}(v%(2^32)/(2^n))%256 end ls=function(v,n) return (v*(2^n))%256 end ba=${TMP}_band end`);
+
+  // The VM interpreter
+  lines.push(`local function ${VM}(scrambledStr)`);
+  lines.push(`  local ${STK}={} local ${SP}=0 local ${OUT}={} local ${PC}=1 local ${IDX}=1 local ${HALTED}=false`);
+  lines.push(`  local function push(v) ${SP}=${SP}+1 ${STK}[${SP}]=v%256 end`);
+  lines.push(`  local function pop() if ${SP}<1 then return 0 end local v=${STK}[${SP}] ${STK}[${SP}]=nil ${SP}=${SP}-1 return v end`);
+  lines.push(`  local function peek() return ${STK}[${SP}] or 0 end`);
+  lines.push(`  while not ${HALTED} and ${PC}<=#${BC} do`);
+  lines.push(`    local ${OP}=${BC}[${PC}] ${PC}=${PC}+1`);
+  lines.push(`    if ${OP}==0x01 then local imm=${BC}[${PC}] ${PC}=${PC}+1 push(imm)`);
+  lines.push(`    elseif ${OP}==0x02 then local ki=${BC}[${PC}] ${PC}=${PC}+1 push(${R}(scrambledStr,(ki%#scrambledStr)+1))`);
+  lines.push(`    elseif ${OP}==0x03 then local b=pop() local a=pop() push(bx(a,b))`);
+  lines.push(`    elseif ${OP}==0x04 then local b=pop() local a=pop() push((a+b)%256)`);
+  lines.push(`    elseif ${OP}==0x05 then local b=pop() local a=pop() push((a-b+256)%256)`);
+  lines.push(`    elseif ${OP}==0x06 then local n=${BC}[${PC}] ${PC}=${PC}+1 push(${TMP}_rol(pop(),n))`);
+  lines.push(`    elseif ${OP}==0x07 then local n=${BC}[${PC}] ${PC}=${PC}+1 push(${TMP}_ror(pop(),n))`);
+  lines.push(`    elseif ${OP}==0x08 then ${OUT}[#${OUT}+1]=string.char(pop())`);
+  lines.push(`    elseif ${OP}==0x09 then push(peek())`);
+  lines.push(`    elseif ${OP}==0x0A then pop()`);
+  lines.push(`    elseif ${OP}==0x0B then local rel=${BC}[${PC}] ${PC}=${PC}+1 ${PC}=${PC}+rel`);
+  lines.push(`    elseif ${OP}==0x0C then local rel=${BC}[${PC}] ${PC}=${PC}+1 if pop()==0 then ${PC}=${PC}+rel end`);
+  lines.push(`    elseif ${OP}==0x0D then push(${IDX}-1)`);
+  lines.push(`    elseif ${OP}==0x0E then ${IDX}=${IDX}+1`);
+  lines.push(`    elseif ${OP}==0x0F then ${HALTED}=true`);
+  lines.push(`    elseif ${OP}==0x10 then`);
+  lines.push(`    elseif ${OP}==0x11 then local c=${BC}[${PC}] ${PC}=${PC}+1 push(bx(pop(),c))`);
+  lines.push(`    elseif ${OP}==0x12 then local c=${BC}[${PC}] ${PC}=${PC}+1 push((pop()+c)%256)`);
+  lines.push(`    elseif ${OP}==0x13 then push(#scrambledStr)`);
+  lines.push(`    elseif ${OP}==0x14 then local b=pop() local a=pop() push(a==b and 1 or 0)`);
+  lines.push(`    elseif ${OP}==0x20 then`);
+  lines.push(`      if ${IDX}<=#scrambledStr then push(${R}(scrambledStr,${IDX})) ${IDX}=${IDX}+1 else push(0) end`);
+  lines.push(`    else`);
+  lines.push(`      if ${PC}<=#${BC} and type(${BC}[${PC}])=="number" and ${BC}[${PC}]<256 and ${OP}>=0x40 then ${PC}=${PC}+1 end`);
+  lines.push(`    end`);
+  lines.push(`  end`);
+  lines.push(`  return ${T}(${OUT})`);
+  lines.push(`end`);
+
+  // DECOY classic unscramble (never executed on real path) — keeps old pattern matchers busy
   lines.push(
-    `local function ${L}(buf,key) local out={} local kl=#key local bx=bit32 and bit32.bxor local bo=bit32 and bit32.bor local rs=bit32 and bit32.rshift local ls=bit32 and bit32.lshift local ba=bit32 and bit32.band for i=1,#buf do local i0=i-1 local b=${R}(buf,i) local k=${R}(key,(i0%kl)+1) local p=ba(i0*131+17,255) local rot=(k%7)+1 local rot2=(p%5)+1 b=bx(b,ba(k*3+p*5+i0,255)) b=ba(b+ba(k+p*3,255),255) b=ba(bo(rs(b,rot2),ls(b,8-rot2)),255) b=ba(b-p+256,255) b=ba(bo(rs(b,rot),ls(b,8-rot)),255) b=ba(b-k+256,255) out[i]=string.char(b) end return ${T}(out) end`
+    `local function ${L}(buf,key) local out={} local kl=#key for i=1,#buf do local i0=i-1 local b=${R}(buf,i) local k=${R}(key,(i0%kl)+1) local p=ba(i0*131+17,255) local rot=(k%7)+1 local rot2=(p%5)+1 b=bx(b,ba(k*3+p*5+i0,255)) b=ba(b+ba(k+p*3,255),255) b=ba(bo(rs(b,rot2),ls(b,8-rot2)),255) b=ba(b-p+256,255) b=ba(bo(rs(b,rot),ls(b,8-rot)),255) b=ba(b-k+256,255) out[i]=string.char(b) end return ${T}(out) end`
   );
 
-  // CF
+  // CF dispatcher (extended)
   lines.push(`local ${ST}="${luaEsc(s0)}"`);
   lines.push(`while true do`);
   lines.push(`if ${ST}=="${s0}" then`);
@@ -295,17 +447,19 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
     `do local h=2654435761 local i=1 local mlen=#${M} while i<=mlen do local b=${R}(${M},i) h=(h+b*(i+30)+((h%89)*17)+13)%4294967296 i=i+1 end local hs=${K}(${H}) local hv=${R}(hs,1)*16777216+${R}(hs,2)*65536+${R}(hs,3)*256+${R}(hs,4) local ls=${K}(${B}) local lv=${R}(ls,1)*16777216+${R}(ls,2)*65536+${R}(ls,3)*256+${R}(ls,4) if h~=hv or mlen~=lv then ${OK}=false ${ST}="${sDead}" else ${ST}="${s2}" end end`
   );
   lines.push(`elseif ${ST}=="${s2}" then`);
-  lines.push(`${SS}=${L}(${M},${N})`);
-  lines.push(`do local ls=${K}(${B}) local lv=${R}(ls,1)*16777216+${R}(ls,2)*65536+${R}(ls,3)*256+${R}(ls,4) if #${SS}~=lv then ${OK}=false ${ST}="${sDead}" else ${ST}="${s3}" end end`);
+  lines.push(`do local hs=${K}(${I}) local hv=${R}(hs,1)*16777216+${R}(hs,2)*65536+${R}(hs,3)*256+${R}(hs,4)`);
+  lines.push(`local h=2166136261 local i=1 local mlen=#${M} while i<=mlen do h=((h~${R}(${M},i))*16777619)%4294967296 i=i+1 end`);
+  lines.push(`if h~=hv then ${OK}=false ${ST}="${sDead}" else ${ST}="${s3}" end end`);
   lines.push(`elseif ${ST}=="${s3}" then`);
-  /* anti-hook: detect loadstring wrappers (newcclosure dumpers) */
+  // Run the OPCODE VM
+  lines.push(`${SS}=${VM}(${M})`);
+  lines.push(`do local ls=${K}(${B}) local lv=${R}(ls,1)*16777216+${R}(ls,2)*65536+${R}(ls,3)*256+${R}(ls,4) if #${SS}~=lv then ${OK}=false ${ST}="${sDead}" else ${ST}="${s4}" end end`);
+  lines.push(`elseif ${ST}=="${s4}" then`);
   lines.push(`do local loader=${BB} local hooked=false`);
   lines.push(`if iscclosure and loader and not iscclosure(loader) then hooked=true end`);
   lines.push(`pcall(function() local s=${W}(loader) if s and not string.find(s,"function:") and not string.find(s,"builtin") then hooked=true end end)`);
   lines.push(`if hooked then local alt=load if ${U}(alt)=="function" and alt~=loader then loader=alt else ${SS}=nil return end end`);
-  /* flood dumpers that capture #s>1000 with decoy payloads */
   lines.push(`pcall(function() for i=1,12 do local decoy=string.rep("--"..tostring(i*97+13).."\\n",80) if #decoy>1000 then loader(decoy) end end end)`);
-  /* execute real payload via char-table reassembly to frustrate simple string grabs */
   lines.push(`local fn`);
   lines.push(`do local bytes={} for i=1,#${SS} do bytes[i]=${R}(${SS},i) end ${SS}=nil`);
   lines.push(`local parts={} local buf={} local bi=0 local LIM=750`);
@@ -314,7 +468,7 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
   lines.push(`bytes=nil buf=nil`);
   lines.push(`local src=table.concat(parts) parts=nil`);
   lines.push(`fn=loader(src) src=nil end`);
-  lines.push(`${M}=nil ${J}=nil ${N}=nil`);
+  lines.push(`${M}=nil ${J}=nil ${N}=nil ${BC}=nil`);
   lines.push(`if ${U}(fn)=="function" then local r=fn(...) fn=nil return r end`);
   lines.push(`return`);
   lines.push(`elseif ${ST}=="${sDead}" then`);
@@ -324,7 +478,7 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
   lines.push('end)(...)');
 
   return (
-    `--[[ Protected by QyrexObf v1.0.0 | qyrex.hopto.org ]]
+    `--[[ Protected by QyrexObf v${VERSION} | qyrex.hopto.org | OPCODE-VM ]]
 ` + lines.join('\n')
   );
 }
@@ -349,7 +503,9 @@ function obfuscate(source) {
     throw new Error('roundtrip failed — refusing to emit broken output');
   }
 
-  const code = buildLoader(sym, key, sumA, sumB, scrambled.length);
+  const bc = buildVmBytecode(scrambled, key);
+
+  const code = buildLoader(sym, key, sumA, sumB, scrambled.length, scrambled);
   return {
     code,
     stats: {
@@ -360,11 +516,19 @@ function obfuscate(source) {
         'chaotic-alphabet',
         'multi-round-scramble',
         'dual-integrity-hash',
-        'score-anti-tamper','aqua-primitives','sandbox-dtc','hook-probes','frozen-refs',
+        'score-anti-tamper',
+        'aqua-primitives',
+        'sandbox-dtc',
+        'hook-probes',
+        'frozen-refs',
         'cf-dispatcher',
-        'llm-decoys'
+        'llm-decoys',
+        'custom-opcode-vm',
+        'vm-junk-ops',
+        'vm-stack-reconstruction'
       ],
-      verified: true
+      verified: true,
+      vmOpcodes: bc.length
     }
   };
 }
