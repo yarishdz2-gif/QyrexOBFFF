@@ -167,6 +167,7 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
   const P = rid(), Q = rid(), R = rid(), S = rid(), T = rid();
   const U = rid(), V = rid(), W = rid(), X = rid();
   const ST = rid(), OK = rid();
+  const AA = rid(), BB = rid(), CC = rid(), SS = rid();
 
   const parts = chunkSym(sym);
   const vLit = parts
@@ -192,18 +193,33 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
 
   lines.push('return(function(...)');
 
-  /* ---- locals & anti-tamper ---- */
+  /* ---- score-based anti-tamper (Roblox-safe, fails only if clearly poisoned) ---- */
   lines.push(`local ${OK}=true`);
   lines.push(`local ${U}=type`);
   lines.push(`local ${V}=pcall`);
+  lines.push(`local ${W}=tostring`);
   lines.push(`local function ${X}() ${OK}=false end`);
-  lines.push(`if ${U}(string)~="table" or ${U}(string.byte)~="function" or ${U}(string.sub)~="function" or ${U}(string.char)~="function" then ${X}() end`);
-  lines.push(`if ${U}(table)~="table" or ${U}(table.concat)~="function" then ${X}() end`);
-  lines.push(`if ${U}(math)~="table" or ${U}(math.floor)~="function" then ${X}() end`);
-  lines.push(`if ${U}(pcall)~="function" or ${U}(type)~="function" or ${U}(tostring)~="function" then ${X}() end`);
-  lines.push(`do local ${R},${S}=${V}(function() return 214 end) if not ${R} or ${S}~=214 then ${X}() end end`);
-  lines.push(`if ${U}(_G)=="table" then local ${T}=rawget or function(t,k) return t[k] end if ${T}(_G,"pcall")~=nil and ${T}(_G,"pcall")~=pcall then ${X}() end if ${T}(_G,"type")~=nil and ${T}(_G,"type")~=type then ${X}() end if ${T}(_G,"tostring")~=nil and ${T}(_G,"tostring")~=tostring then ${X}() end end`);
-  lines.push(`if ((${magA}*4)%2)~=0 then ${X}() end`);
+  /* freeze critical refs early */
+  lines.push(`local ${R}=string.byte`);
+  lines.push(`local ${S}=string.sub`);
+  lines.push(`local ${T}=table.concat`);
+  lines.push(`local ${AA}=math.floor`);
+  lines.push(`local ${BB}=loadstring or load`);
+  /* score checks — normal Luau/Roblox accumulates TARGET */
+  lines.push(`local ${CC}=0`);
+  lines.push(`if ${U}(string)=="table" and ${U}(${R})=="function" and ${U}(${S})=="function" then ${CC}=${CC}+40 end`);
+  lines.push(`if ${U}(table)=="table" and ${U}(${T})=="function" then ${CC}=${CC}+25 end`);
+  lines.push(`if ${U}(math)=="table" and ${U}(${AA})=="function" then ${CC}=${CC}+25 end`);
+  lines.push(`if ${U}(pcall)=="function" and ${U}(type)=="function" and ${U}(tostring)=="function" then ${CC}=${CC}+30 end`);
+  lines.push(`do local a,b=${V}(function() return 214 end) if a and b==214 then ${CC}=${CC}+20 end end`);
+  lines.push(`if ((${magA}*4)%2)==0 then ${CC}=${CC}+15 end`);
+  /* optional hook probes: only subtract if _G has a DIFFERENT binding (true hook) */
+  lines.push(`if ${U}(_G)=="table" then local rg=rawget or function(t,k) return t[k] end local rp=rg(_G,"pcall") local rt=rg(_G,"type") if rp~=nil and rp~=pcall then ${CC}=${CC}-80 end if rt~=nil and rt~=type then ${CC}=${CC}-80 end end`);
+  /* rawequal identity when available */
+  lines.push(`if rawequal then if rawequal(pcall,pcall) and rawequal(type,type) then ${CC}=${CC}+15 else ${CC}=${CC}-50 end end`);
+  lines.push(`if ${CC}<100 then ${X}() end`);
+  /* loader must exist */
+  lines.push(`if ${U}(${BB})~="function" then ${X}() end`);
 
   /* ---- decoys (LLM traps) ---- */
   lines.push(`local ${B}="${luaEsc(j1)}"`);
@@ -225,12 +241,12 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
 
   /* ---- symbol → bytes (safe loops) ---- */
   lines.push(
-    `local function ${K}(z) local o={} local pos=1 local zlen=#z while pos+1<=zlen do local n=0 local i=0 while i<${WORD} do local ch=string.sub(z,pos+i,pos+i) n=n*${BASE}+(${E}[ch] or 0) i=i+1 end o[#o+1]=string.char(n%256) pos=pos+${WORD} end return table.concat(o) end`
+    `local function ${K}(z) local o={} local pos=1 local zlen=#z while pos+1<=zlen do local n=0 local i=0 while i<${WORD} do local ch=${S}(z,pos+i,pos+i) n=n*${BASE}+(${E}[ch] or 0) i=i+1 end o[#o+1]=string.char(n%256) pos=pos+${WORD} end return table.concat(o) end`
   );
 
   /* ---- reverse scramble in pure Lua arithmetic ---- */
   lines.push(
-    `local function ${L}(data,key) local o={} local kl=#key local dlen=#data local i=1 while i<=dlen do local b=string.byte(data,i) local k=string.byte(key,((i-1)%kl)+1) local p=((i-1)*131+17)%256 local rot=(k%7)+1 local rot2=(p%5)+1 local mix=((k*3+p*5+(i-1))%256) local x=0 local bb=b local mm=mix local bit=0 while bit<8 do local abit=bb%2 local mbit=mm%2 if abit~=mbit then x=x+(2^bit) end bb=math.floor(bb/2) mm=math.floor(mm/2) bit=bit+1 end b=x b=(b+((k+p*3)%256))%256 local hi=math.floor(b/(2^rot2)) local lo=b%(2^rot2) b=(lo*(2^(8-rot2))+hi)%256 b=(b-p+256)%256 hi=math.floor(b/(2^rot)) lo=b%(2^rot) b=(lo*(2^(8-rot))+hi)%256 b=(b-k+256)%256 o[i]=string.char(b) i=i+1 end return table.concat(o) end`
+    `local function ${L}(data,key) local o={} local kl=#key local dlen=#data local i=1 while i<=dlen do local b=${R}(data,i) local k=${R}(key,((i-1)%kl)+1) local p=((i-1)*131+17)%256 local rot=(k%7)+1 local rot2=(p%5)+1 local mix=((k*3+p*5+(i-1))%256) local x=0 local bb=b local mm=mix local bit=0 while bit<8 do local abit=bb%2 local mbit=mm%2 if abit~=mbit then x=x+(2^bit) end bb=math.floor(bb/2) mm=math.floor(mm/2) bit=bit+1 end b=x b=(b+((k+p*3)%256))%256 local hi=math.floor(b/(2^rot2)) local lo=b%(2^rot2) b=(lo*(2^(8-rot2))+hi)%256 b=(b-p+256)%256 hi=math.floor(b/(2^rot)) lo=b%(2^rot) b=(lo*(2^(8-rot))+hi)%256 b=(b-k+256)%256 o[i]=string.char(b) i=i+1 end return table.concat(o) end`
   );
 
   /* ---- CF dispatcher ---- */
@@ -243,18 +259,18 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
   lines.push(`${M}=${K}(${J})`);
   lines.push(`${N}=${K}(${G})`);
   lines.push(
-    `do local h=2654435761 local i=1 local mlen=#${M} while i<=mlen do local b=string.byte(${M},i) h=(h+b*(i+30)+((h%89)*17)+13)%4294967296 i=i+1 end if h~=${H} or mlen~=${payloadLen} then ${OK}=false ${ST}=${sDead} else ${ST}=${s2} end end`
+    `do local h=2654435761 local i=1 local mlen=#${M} while i<=mlen do local b=${R}(${M},i) h=(h+b*(i+30)+((h%89)*17)+13)%4294967296 i=i+1 end if h~=${H} or mlen~=${payloadLen} then ${OK}=false ${ST}=${sDead} else ${ST}=${s2} end end`
   );
   lines.push(`elseif ${ST}==${s2} then`);
   lines.push(
-    `do local h=2166136261 local i=1 local mlen=#${M} while i<=mlen do h=((h+string.byte(${M},i))%4294967296) h=(h*16777619)%4294967296 i=i+1 end if (h%2147483647)~=(${sumB}%2147483647) then end end`
+    `do local h=2166136261 local i=1 local mlen=#${M} while i<=mlen do h=((h+${R}(${M},i))%4294967296) h=(h*16777619)%4294967296 i=i+1 end if (h%2147483647)~=(${sumB}%2147483647) then end end`
   );
-  lines.push(`${S}=${L}(${M},${N})`);
-  lines.push(`if #${S}~=${payloadLen} then ${OK}=false ${ST}=${sDead} else ${ST}=${s3} end`);
+  lines.push(`${SS}=${L}(${M},${N})`);
+  lines.push(`if #${SS}~=${payloadLen} then ${OK}=false ${ST}=${sDead} else ${ST}=${s3} end`);
   lines.push(`elseif ${ST}==${s3} then`);
-  lines.push(`local loader=loadstring or load`);
-  lines.push(`if ${U}(loader)~="function" then return end`);
-  lines.push(`local fn=loader(${S},"@qyrex")`);
+  lines.push(`local loader=${BB}`);
+  lines.push(`if ${U}(loader)~="function" or not ${OK} then return end`);
+  lines.push(`local fn=loader(${SS},"@qyrex")`);
   lines.push(`if ${U}(fn)~="function" then return end`);
   lines.push(`return fn(...)`);
   lines.push(`elseif ${ST}==${sDead} then`);
@@ -300,7 +316,7 @@ function obfuscate(source) {
         'chaotic-alphabet',
         'multi-round-scramble',
         'dual-integrity-hash',
-        'anti-tamper',
+        'score-anti-tamper','frozen-refs','hook-probes',
         'cf-dispatcher',
         'llm-decoys'
       ],
