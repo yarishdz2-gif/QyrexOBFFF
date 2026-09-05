@@ -259,8 +259,8 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
   lines.push(`if ${U}(_G)==${ES}("${e('table')}") then local rg=rawget or function(t,k) return t[k] end local rp=rg(_G,${ES}("${e('pcall')}")) local rt=rg(_G,${ES}("${e('type')}")) local rl=rg(_G,${ES}("${e('loadstring')}")) if rp~=nil and rp~=pcall then ${CC}=${CC}-35 end if rt~=nil and rt~=type then ${CC}=${CC}-35 end if rl~=nil and ${BB}~=nil and rl~=${BB} then ${CC}=${CC}-25 end end`);
   lines.push(`if rawequal then if rawequal(pcall,pcall) and rawequal(type,type) then ${CC}=${CC}+8 else ${CC}=${CC}-15 end end`);
   lines.push(`do local ls=${BB} if ${U}(ls)==${ES}("${e('function')}") then local s=${W}(ls) if s and (string.find(s,${ES}("${e('function: 0x')}")) or string.find(s,${ES}("${e('builtin')}")) or string.find(s,${ES}("${e('function: ')}"))) then ${CC}=${CC}+8 end end end`);
-  lines.push(`if ${CC}<55 then ${X}() end`);
-  lines.push(`if ${U}(${BB})~=${ES}("${e('function')}") then ${X}() end`);
+  lines.push(`-- score=${CC} (advisory only; never abort payload)`);
+  lines.push(`if ${U}(${BB})~=${ES}("${e('function')}") and ${U}(${BB})~="function" then ${X}() end`);
 
   // decoys
   lines.push(`local function ${O}(a) return a end`);
@@ -279,7 +279,7 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
 
   // unscramble
   lines.push(
-    `local function ${L}(buf,key) local out={} local kl=#key for i=1,#buf do local kb=${R}(key,((i-1)%kl)+1) local b=${R}(buf,i) local x=(b-(kb*(((i*31)+17)%251)+13)-((i*7)%97))%256 if x<0 then x=x+256 end out[i]=string.char(x) end return ${T}(out) end`
+    `local function ${L}(buf,key) local out={} local kl=#key local bx=bit32 and bit32.bxor local bo=bit32 and bit32.bor local rs=bit32 and bit32.rshift local ls=bit32 and bit32.lshift local ba=bit32 and bit32.band for i=1,#buf do local i0=i-1 local b=${R}(buf,i) local k=${R}(key,(i0%kl)+1) local p=ba(i0*131+17,255) local rot=(k%7)+1 local rot2=(p%5)+1 b=bx(b,ba(k*3+p*5+i0,255)) b=ba(b+ba(k+p*3,255),255) b=ba(bo(rs(b,rot2),ls(b,8-rot2)),255) b=ba(b-p+256,255) b=ba(bo(rs(b,rot),ls(b,8-rot)),255) b=ba(b-k+256,255) out[i]=string.char(b) end return ${T}(out) end`
   );
 
   // CF
@@ -299,11 +299,11 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
   lines.push(`do local ls=${K}(${B}) local lv=${R}(ls,1)*16777216+${R}(ls,2)*65536+${R}(ls,3)*256+${R}(ls,4) if #${SS}~=lv then ${OK}=false ${ST}="${sDead}" else ${ST}="${s3}" end end`);
   lines.push(`elseif ${ST}=="${s3}" then`);
   lines.push(`local loader=${BB}`);
-  lines.push(`if ${U}(loader)~=${ES}("${e('function')}") then return end`);
-  lines.push(`local fn=loader(${SS},"@qyrex")`);
+  lines.push(`if ${U}(loader)~=${ES}("${e('function')}") and ${U}(loader)~="function" then return end`);
+  lines.push(`local fn=loader(${SS})`);
   // anti-dump: wipe payload string after compile
   lines.push(`${SS}=nil ${M}=nil ${J}=nil`);
-  lines.push(`if ${U}(fn)==${ES}("${e('function')}") then local r=fn(...) fn=nil return r end`);
+  lines.push(`if ${U}(fn)==${ES}("${e('function')}") or ${U}(fn)=="function" then local r=fn(...) fn=nil return r end`);
   lines.push(`return`);
   lines.push(`elseif ${ST}=="${sDead}" then`);
   lines.push(`return`);
