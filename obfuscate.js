@@ -14,8 +14,7 @@ const MAX_BYTES = 1_500_000;
 
 /* ≥35-symbol chaotic alphabet — ONLY for payload encoding inside string literals */
 const ALPHA =
-  '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz' +
-  '!#$%&/()=?@_:;+*~[]{}<>|^.,';
+  '°!#$%&/()=?¡¿@><~*^_|¬{}[]+-§¶‰⌂·×÷±≈≠≤≥∞•◦‣※☆★◆◇○●□■▲▼◄►';
 const BASE = ALPHA.length; // must be constant
 const WORD = 2; // 2 symbols per byte (BASE^2 >= 256)
 
@@ -23,10 +22,12 @@ const rb = (n) => crypto.randomBytes(n);
 const ri = (n) => crypto.randomInt(0, n);
 
 function rid(len) {
-  const n = len || 6 + ri(4);
-  const chars = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ';
+  const n = len || 8 + ri(6);
+  /* identifiers: underscore + digits only (no Latin letters visible) */
   let s = '_';
-  for (let i = 0; i < n; i++) s += chars[ri(chars.length)];
+  for (let i = 0; i < n; i++) s += String(ri(10));
+  /* ensure uniqueness bias */
+  s += '_' + String(ri(100000));
   return s;
 }
 
@@ -261,7 +262,7 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
 
   /* ---- CF dispatcher ---- */
   lines.push(`local ${ST}=${s0}`);
-  lines.push(`local ${M} local ${N} local ${S}`);
+  lines.push(`local ${M} local ${N}`);
   lines.push(`while ${OK} do`);
   lines.push(`if ${ST}==${s0} then`);
   lines.push(`if ${OK} then ${ST}=${s1} else ${ST}=${sDead} end`);
