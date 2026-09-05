@@ -193,50 +193,43 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
 
   lines.push('return(function(...)');
 
-  /* ---- score-based anti-tamper (Roblox-safe, fails only if clearly poisoned) ---- */
+  /* ---- hardened integrity + anti-sandbox (safe subset of supplied guards) ---- */
   lines.push(`local ${OK}=true`);
   lines.push(`local ${U}=type`);
   lines.push(`local ${V}=pcall`);
   lines.push(`local ${W}=tostring`);
   lines.push(`local function ${X}() ${OK}=false end`);
-  /* freeze critical refs early */
   lines.push(`local ${R}=string.byte`);
   lines.push(`local ${S}=string.sub`);
   lines.push(`local ${T}=table.concat`);
   lines.push(`local ${AA}=math.floor`);
   lines.push(`local ${BB}=loadstring or load`);
-  /* score checks — normal Luau/Roblox accumulates TARGET */
   lines.push(`local ${CC}=0`);
-  lines.push(`if ${U}(string)=="table" and ${U}(${R})=="function" and ${U}(${S})=="function" then ${CC}=${CC}+40 end`);
-  lines.push(`if ${U}(table)=="table" and ${U}(${T})=="function" then ${CC}=${CC}+25 end`);
-  lines.push(`if ${U}(math)=="table" and ${U}(${AA})=="function" then ${CC}=${CC}+25 end`);
-  lines.push(`if ${U}(pcall)=="function" and ${U}(type)=="function" and ${U}(tostring)=="function" then ${CC}=${CC}+30 end`);
-  lines.push(`do local a,b=${V}(function() return 214 end) if a and b==214 then ${CC}=${CC}+20 end end`);
-  lines.push(`if ((${magA}*4)%2)==0 then ${CC}=${CC}+15 end`);
-  /* optional hook probes: only subtract if _G has a DIFFERENT binding (true hook) */
+  /* primitive identity */
+  lines.push(`if ${U}(string)=="table" and ${U}(${R})=="function" and ${U}(${S})=="function" then ${CC}=${CC}+25 end`);
+  lines.push(`if ${U}(table)=="table" and ${U}(${T})=="function" then ${CC}=${CC}+15 end`);
+  lines.push(`if ${U}(math)=="table" and ${U}(${AA})=="function" then ${CC}=${CC}+15 end`);
+  lines.push(`if ${U}(pcall)=="function" and ${U}(type)=="function" and ${U}(tostring)=="function" then ${CC}=${CC}+20 end`);
+  lines.push(`do local a,b=${V}(function() return 214 end) if a and b==214 then ${CC}=${CC}+15 end end`);
+  lines.push(`if ((${magA}*4)%2)==0 then ${CC}=${CC}+10 end`);
+  /* pcall(error) must fail */
+  lines.push(`do local a=${V}(error,"\\0",0) if a then ${X}() else ${CC}=${CC}+15 end end`);
+  /* semantic probes */
+  lines.push(`if ${R}("A")==65 then ${CC}=${CC}+10 end`);
+  lines.push(`if ${AA}(3.9)==3 then ${CC}=${CC}+10 end`);
+  /* tostring of two tables must differ (hook detection) */
+  lines.push(`if ${W}({})~=${W}({}) then ${CC}=${CC}+10 else ${X}() end`);
+  /* game type if present */
+  lines.push(`if game~=nil then if ${U}(game)==${U}({}) then ${X}() elseif typeof and typeof(game)~="Instance" then ${X}() else ${CC}=${CC}+15 end end`);
+  /* analysis env */
+  lines.push(`do local bad=false if ${U}(_G)=="table" then local function has(k) local ok,v=${V}(function() return rawget(_G,k) end) return ok and v~=nil end if has("process") or has("window") or has("document") or has("Buffer") or has("atob") or has("__dirname") or has("lune") or has("lute") or has("rojo") or has("lemur") then bad=true end if has("dofile") or has("loadfile") then bad=true end end if ${U}(io)=="table" and ${U}(io.open)=="function" then bad=true end if ${U}(os)=="table" and ${U}(os.execute)=="function" then bad=true end if bad then ${X}() else ${CC}=${CC}+15 end end`);
+  /* optional sandbox fingerprints */
+  lines.push(`pcall(function() if game and game.JobId=="00000000-0000-0000-0000-000000000000" and game.PlaceId==8916037983 then ${X}() end end)`);
+  /* hook probes on _G */
   lines.push(`if ${U}(_G)=="table" then local rg=rawget or function(t,k) return t[k] end local rp=rg(_G,"pcall") local rt=rg(_G,"type") if rp~=nil and rp~=pcall then ${CC}=${CC}-80 end if rt~=nil and rt~=type then ${CC}=${CC}-80 end end`);
-  /* rawequal identity when available */
-  lines.push(`if rawequal then if rawequal(pcall,pcall) and rawequal(type,type) then ${CC}=${CC}+15 else ${CC}=${CC}-50 end end`);
+  lines.push(`if rawequal then if rawequal(pcall,pcall) and rawequal(type,type) then ${CC}=${CC}+10 else ${CC}=${CC}-40 end end`);
   lines.push(`if ${CC}<100 then ${X}() end`);
-  /* loader must exist */
   lines.push(`if ${U}(${BB})~="function" then ${X}() end`);
-
-  /* ---- compact anti-sandbox / analysis env (from attached detectors, safe subset) ---- */
-  lines.push(`do local bad=false`);
-  lines.push(`if type(_G)=="table" then`);
-  lines.push(`local function has(k) local ok,v=pcall(function() return rawget(_G,k) end) return ok and v~=nil end`);
-  lines.push(`if has("process") or has("window") or has("document") or has("navigator") or has("Buffer") or has("atob") or has("btoa") or has("__dirname") or has("__filename") or has("globalThis") or has("XMLHttpRequest") then bad=true end`);
-  lines.push(`if has("lune") or has("lute") or has("wally") or has("rojo") or has("selene") or has("darklua") or has("lemur") or has("busted") then bad=true end`);
-  lines.push(`if has("dofile") or has("loadfile") then bad=true end`);
-  lines.push(`end`);
-  lines.push(`if type(io)=="table" and type(io.open)=="function" then bad=true end`);
-  lines.push(`if type(os)=="table" and type(os.execute)=="function" then bad=true end`);
-  lines.push(`if type(package)=="table" then local ok,p=pcall(function() return rawget(package,"lune") or rawget(package,"lute") or rawget(package,"config") end) if ok and p then bad=true end end`);
-  lines.push(`pcall(function() if type(require)=="function" then local ok=pcall(require,"@lune/fs") if ok then bad=true end end end)`);
-  lines.push(`if type(string)=="table" and type(string.byte)=="function" and string.byte("A")~=65 then bad=true end`);
-  lines.push(`if type(math)=="table" and type(math.floor)=="function" and math.floor(3.9)~=3 then bad=true end`);
-  lines.push(`if bad then ${X}() end`);
-  lines.push(`end`);
 
   /* ---- decoys (LLM traps) ---- */
   lines.push(`local ${B}="${luaEsc(j1)}"`);
