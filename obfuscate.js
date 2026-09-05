@@ -221,6 +221,23 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
   /* loader must exist */
   lines.push(`if ${U}(${BB})~="function" then ${X}() end`);
 
+  /* ---- compact anti-sandbox / analysis env (from attached detectors, safe subset) ---- */
+  lines.push(`do local bad=false`);
+  lines.push(`if type(_G)=="table" then`);
+  lines.push(`local function has(k) local ok,v=pcall(function() return rawget(_G,k) end) return ok and v~=nil end`);
+  lines.push(`if has("process") or has("window") or has("document") or has("navigator") or has("Buffer") or has("atob") or has("btoa") or has("__dirname") or has("__filename") or has("globalThis") or has("XMLHttpRequest") then bad=true end`);
+  lines.push(`if has("lune") or has("lute") or has("wally") or has("rojo") or has("selene") or has("darklua") or has("lemur") or has("busted") then bad=true end`);
+  lines.push(`if has("dofile") or has("loadfile") then bad=true end`);
+  lines.push(`end`);
+  lines.push(`if type(io)=="table" and type(io.open)=="function" then bad=true end`);
+  lines.push(`if type(os)=="table" and type(os.execute)=="function" then bad=true end`);
+  lines.push(`if type(package)=="table" then local ok,p=pcall(function() return rawget(package,"lune") or rawget(package,"lute") or rawget(package,"config") end) if ok and p then bad=true end end`);
+  lines.push(`pcall(function() if type(require)=="function" then local ok=pcall(require,"@lune/fs") if ok then bad=true end end end)`);
+  lines.push(`if type(string)=="table" and type(string.byte)=="function" and string.byte("A")~=65 then bad=true end`);
+  lines.push(`if type(math)=="table" and type(math.floor)=="function" and math.floor(3.9)~=3 then bad=true end`);
+  lines.push(`if bad then ${X}() end`);
+  lines.push(`end`);
+
   /* ---- decoys (LLM traps) ---- */
   lines.push(`local ${B}="${luaEsc(j1)}"`);
   lines.push(`local ${C}="${luaEsc(j2)}"`);
@@ -316,7 +333,7 @@ function obfuscate(source) {
         'chaotic-alphabet',
         'multi-round-scramble',
         'dual-integrity-hash',
-        'score-anti-tamper','frozen-refs','hook-probes',
+        'score-anti-tamper','frozen-refs','hook-probes','anti-sandbox',
         'cf-dispatcher',
         'llm-decoys'
       ],
