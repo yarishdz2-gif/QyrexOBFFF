@@ -1,42 +1,69 @@
 /**
- * QyrexObf 1.6.7 — multi-line (executes) + hardened anti-tamper
- * NO XOR · add/rot/sub scramble · ASCII alphabet · dense payload
+ * QyrexObf 1.6.7 — Symbolic Chaos Generator
+ * ---------------------------------------------------------------
+ * Generator (Node) that emits a self-decoding Luau script.
+ *
+ * Layers:
+ *  1) Extended ASCII symbol alphabet (Luau-safe, byte-indexed)
+ *  2) Reversible scramble: add → rotL → add → rotL → sub
+ *     (NO XOR, NO Base64)
+ *  3) Integrity checksum (32-bit rolling hash) before load
+ *  4) Anti-tamper stack (env / sandbox / Obscura / getgenv)
+ *  5) Isolated do-block + random local ids
+ *
+ * Usage:
+ *   const { obfuscate } = require('./obfuscate');
+ *   const { code } = obfuscate(sourceString);
  */
 'use strict';
 const crypto = require('crypto');
 
-const MAX = 1_000_000;
+const MAX_BYTES = 1_000_000;
+
+/* ------------------------------------------------------------------
+ * 1) Extended chaotic alphabet (ASCII only — Luau string.sub is
+ *    byte-based; multi-byte UTF-8 would break decoding)
+ * ------------------------------------------------------------------ */
 const ALPHA =
-  '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz' +
+  '0123456789' +
+  'ABCDEFGHIJKLMNOPQRSTUVWXYZ' +
+  'abcdefghijklmnopqrstuvwxyz' +
   '!#$%&/()=?@_:;+*~[]{}|^<>';
-const BASE = ALPHA.length;
-const WORD = 2;
+const BASE = ALPHA.length; // 88
+const WORD = 2;            // BASE^2 = 7744 > 255
 
 const rb = n => crypto.randomBytes(n);
 const ri = n => rb(1)[0] % n;
 
-function rid(n) {
-  n = n || (5 + ri(3));
-  const A = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ';
+/** Random local identifier */
+function rid(len) {
+  len = len || (5 + ri(4));
+  const pool = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ';
   let s = '_';
-  const b = rb(n);
-  for (let i = 0; i < n; i++) s += A[b[i] % A.length];
+  const b = rb(len);
+  for (let i = 0; i < len; i++) s += pool[b[i] % pool.length];
   return s;
 }
 
+/* ------------------------------------------------------------------
+ * Symbol encode / decode (base-BASE digit pairs)
+ * ------------------------------------------------------------------ */
 function encByte(b) {
-  let n = b & 255, w = '';
+  let n = b & 255;
+  let w = '';
   for (let i = 0; i < WORD; i++) {
     w = ALPHA[n % BASE] + w;
     n = (n / BASE) | 0;
   }
   return w;
 }
+
 function encBuf(buf) {
-  let o = '';
-  for (let i = 0; i < buf.length; i++) o += encByte(buf[i]);
-  return o;
+  let out = '';
+  for (let i = 0; i < buf.length; i++) out += encByte(buf[i]);
+  return out;
 }
+
 function decBuf(sym) {
   const map = Object.create(null);
   for (let i = 0; i < ALPHA.length; i++) map[ALPHA[i]] = i;
@@ -50,6 +77,9 @@ function decBuf(sym) {
   return out;
 }
 
+/* ------------------------------------------------------------------
+ * 2) Reversible scramble — add / rotate / sub only (NO XOR)
+ * ------------------------------------------------------------------ */
 function scramble(data, key) {
   const out = Buffer.allocUnsafe(data.length);
   const kl = key.length;
@@ -88,14 +118,18 @@ function unscramble(data, key) {
   return out;
 }
 
+/* ------------------------------------------------------------------
+ * 3) Integrity hash (32-bit rolling)
+ * ------------------------------------------------------------------ */
 function checksum(buf) {
   let h = 0x9e3779b1 >>> 0;
-  for (let i = 0; i < buf.length; i++)
+  for (let i = 0; i < buf.length; i++) {
     h = (h + buf[i] * (i + 31) + ((h % 89) * 17) + 13) >>> 0;
+  }
   return h >>> 0;
 }
 
-function chunks(sym) {
+function chunkPayload(sym) {
   const parts = [];
   let i = 0;
   while (i < sym.length) {
@@ -113,17 +147,20 @@ function chunks(sym) {
 function junk() {
   const pool = '!#$%&/()=?@_:;+*~[]{}|^<>0123456789abcdefghijk';
   let s = '';
-  const n = 20 + ri(30);
+  const n = 18 + ri(28);
   const b = rb(n);
   for (let i = 0; i < n; i++) s += pool[b[i] % pool.length];
   return s;
 }
 
-function build(sym, key, sum, len) {
+/* ------------------------------------------------------------------
+ * 4–5) Emit Luau loader (multi-line, isolated, anti-tamper)
+ * ------------------------------------------------------------------ */
+function buildLuau(sym, key, sum, len) {
   const id = {};
   for (const c of 'ABCDEFGHIJKLMNOPQRSTUV') id[c] = rid();
 
-  const parts = chunks(sym);
+  const parts = chunkPayload(sym);
   const vLit = parts.map((p, i) => {
     const sep = i < parts.length - 1 ? (ri(3) ? ',' : ';') : '';
     return `"${p}"${sep}`;
@@ -131,18 +168,19 @@ function build(sym, key, sum, len) {
 
   const keySym = encBuf(key);
   const alphaLit = ALPHA.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  const j1 = junk(), j2 = junk();
+  const j1 = junk();
+  const j2 = junk();
 
   const L = [];
   L.push(`-- Protect by QyrexObf 1.6.7`);
   L.push(`return(function(...)`);
+  L.push(`do`);
 
-  // ---- anti-tamper (fast, no hardlock on legit) ----
+  /* ---- native existence + anti-tamper ---- */
   L.push(`local ${id.A}=1`);
   L.push(`local ${id.B}=type`);
   L.push(`local ${id.C}=rawget`);
   L.push(`local ${id.D}=pcall`);
-  L.push(`do`);
   L.push(`if ${id.B}(pcall)~="function" then ${id.A}=0 end`);
   L.push(`if ${id.B}(string)~="table" and ${id.B}(string)~="userdata" then ${id.A}=0 end`);
   L.push(`if ${id.B}(table)~="table" and ${id.B}(table)~="userdata" then ${id.A}=0 end`);
@@ -152,9 +190,10 @@ function build(sym, key, sum, len) {
   L.push(`if string.byte("A")~=65 then ${id.A}=0 end`);
   L.push(`if math.floor(3.9)~=3 then ${id.A}=0 end`);
   L.push(`if math.floor(math.pi)~=3 then ${id.A}=0 end`);
-  L.push(`do local ok=${id.D}(error,"x",0) if ok then ${id.A}=0 end end`);
+  L.push(`do local ok=${id.D}(function() error("x") end) if ok then ${id.A}=0 end end`);
   L.push(`local w=7 if w~=w or w*0~=0 or w<0 then ${id.A}=0 end`);
-  // env
+
+  /* env / injection */
   L.push(`local ${id.E},${id.F}=${id.D}(function() return (getfenv and getfenv(0)) or _G end)`);
   L.push(`if not ${id.E} or ${id.B}(${id.F})~="table" then ${id.A}=0 end`);
   L.push(`if ${id.C} and ${id.F} then`);
@@ -163,16 +202,18 @@ function build(sym, key, sum, len) {
   L.push(`for _,k in ipairs({"fenv","genv","hookenv","lune","lute","process","window","document"}) do`);
   L.push(`if ${id.C}(${id.F},k)~=nil then ${id.A}=0 end end`);
   L.push(`end`);
-  // offline sandbox globals
+
+  /* offline sandbox tool globals */
   L.push(`do local G=_G or {}`);
   L.push(`for _,k in ipairs({"lune","lute","wally","rojo","process","window","document","navigator","__dirname","atob","btoa","setTimeout","Buffer","console"}) do`);
   L.push(`if rawget(G,k)~=nil then ${id.A}=0 end end`);
   L.push(`if G.process and (G.process.env or G.process.platform or G.process.exit) then ${id.A}=0 end`);
   L.push(`end`);
-  // Roblox / Aqua
+
+  /* Roblox / Aqua fingerprints */
   L.push(`if game~=nil then`);
-  L.push(`if ${id.B}(game)==${id.B}({}) then ${id.A}=0 end`);
-  L.push(`if ${id.B}(typeof)=="function" and typeof(game)=="table" then ${id.A}=0 end`);
+  L.push(`if ${id.B}(game)==${id.B}({}) or ${id.B}(game)=="table" then ${id.A}=0 end`);
+  L.push(`if ${id.B}(typeof)=="function" and typeof(game)~="Instance" then ${id.A}=0 end`);
   L.push(`local om,mt=${id.D}(getmetatable,game)`);
   L.push(`if om and ${id.B}(mt)==${id.B}({}) then ${id.A}=0 end`);
   L.push(`local oj,jid=${id.D}(function() return game.JobId end)`);
@@ -197,12 +238,9 @@ function build(sym, key, sum, len) {
   L.push(`if ola and ofg and lat==41.7 and fog==100000 then ${id.A}=0 end`);
   L.push(`end`);
   L.push(`end`);
-  // Obscura-style + getgenv/debug hooks
-  L.push(`do local ok=${id.D}(function() error("x") end) if ok then ${id.A}=0 end end`);
-  L.push(`if game~=nil and ${id.B}(game)~="userdata" then ${id.A}=0 end`);
-  L.push(`if typeof~=nil and game~=nil and typeof(game)~="Instance" then ${id.A}=0 end`);
-  L.push(`if ${id.B}(game)=="table" then ${id.A}=0 end`);
-  L.push(`do local dbg=(getfenv and getfenv() or _G).debug`);
+
+  /* Obscura-style hooks */
+  L.push(`do local dbg=((getfenv and getfenv()) or _G).debug`);
   L.push(`if dbg and dbg.gethook then local ok,h=${id.D}(dbg.gethook) if ok and h~=nil then ${id.A}=0 end end`);
   L.push(`end`);
   L.push(`do local bad=false local ts=tostring`);
@@ -227,12 +265,12 @@ function build(sym, key, sum, len) {
   L.push(`if gu then local ok,uv=${id.D}(gu,getgenv,1) if ok and uv~=nil then ${id.A}=0 end end`);
   L.push(`local x="_t" ge[x]=1 if rawget(ge,x)~=1 then ${id.A}=0 end ge[x]=nil`);
   L.push(`end end`);
-  // opaque predicate (always true path)
+
+  /* opaque always-true */
   L.push(`if ((${12 + ri(10) * 2}*${2 + ri(4)})%2)~=0 then ${id.A}=0 end`);
-  L.push(`end`);
   L.push(`if ${id.A}~=1 then return function() end end`);
 
-  // ---- payload (symbol dense) ----
+  /* ---- payload table (symbol noise) ---- */
   L.push(`local ${id.G}={${vLit}}`);
   L.push(`local ${id.H}="${j1}"`);
   L.push(`local ${id.I}="${j2}"`);
@@ -243,7 +281,7 @@ function build(sym, key, sum, len) {
   L.push(`local ${id.N}=${sum}`);
   L.push(`local ${id.O}=table.concat(${id.G})`);
 
-  // decode
+  /* decode symbols → bytes */
   L.push(`local function ${id.P}(z)`);
   L.push(`local o,pos={},1`);
   L.push(`while pos<=#z do`);
@@ -258,7 +296,7 @@ function build(sym, key, sum, len) {
   L.push(`return table.concat(o)`);
   L.push(`end`);
 
-  // unscramble pure arithmetic
+  /* unscramble (mirror of Node scramble) */
   L.push(`local function ${id.Q}(data,key)`);
   L.push(`local o,kl={},#key`);
   L.push(`for i=1,#data do`);
@@ -279,6 +317,7 @@ function build(sym, key, sum, len) {
   L.push(`return table.concat(o)`);
   L.push(`end`);
 
+  /* integrity + load */
   L.push(`local ${id.R}=${id.P}(${id.O})`);
   L.push(`local ${id.S}=${id.P}(${id.M})`);
   L.push(`do local h=2654435761`);
@@ -290,15 +329,21 @@ function build(sym, key, sum, len) {
   L.push(`local ${id.U}=(loadstring or load)(${id.T})`);
   L.push(`if type(${id.U})~="function" then return function() end end`);
   L.push(`return ${id.U}(...)`);
+  L.push(`end`);
   L.push(`end)(...)`);
 
   return L.join('\n');
 }
 
+/**
+ * Public API
+ * @param {string} source  plain Luau/Lua source
+ * @returns {{ code: string, stats: object }}
+ */
 function obfuscate(source) {
   const src = String(source ?? '');
   if (!src.trim()) throw new Error('Empty code');
-  if (Buffer.byteLength(src, 'utf8') > MAX) throw new Error('Too large');
+  if (Buffer.byteLength(src, 'utf8') > MAX_BYTES) throw new Error('Too large');
 
   const raw = Buffer.from(src, 'utf8');
   const key = rb(32 + ri(8));
@@ -306,17 +351,20 @@ function obfuscate(source) {
   const sum = checksum(scrambled);
   const sym = encBuf(scrambled);
 
-  const back = unscramble(decBuf(sym), key);
-  if (!back.equals(raw)) throw new Error('roundtrip failed');
+  // hard verify before emit
+  const round = unscramble(decBuf(sym), key);
+  if (!round.equals(raw)) throw new Error('Internal roundtrip failure');
 
-  const code = build(sym, key, sum, scrambled.length);
+  const code = buildLuau(sym, key, sum, scrambled.length);
   return {
     code,
     stats: {
       inputBytes: raw.length,
       outputBytes: Buffer.byteLength(code, 'utf8'),
       mode: 'QyrexObf-1.6.7',
-      encoding: 'add+rot+sub (NO xor) multi-line',
+      alphabetSize: BASE,
+      encoding: 'symbol-base + add/rot/sub (NO xor, NO base64)',
+      antiTamper: true,
       verified: true
     }
   };
