@@ -12,9 +12,9 @@ const crypto = require('crypto');
 const VERSION = '1.0.0';
 const MAX_BYTES = 1_500_000;
 
-/* ≥35-symbol chaotic alphabet — ONLY for payload encoding inside string literals */
+/* ASCII-only alphabet (1 byte/char). Multi-byte UTF-8 breaks Luau string.sub byte indexing. */
 const ALPHA =
-  '°!#$%&/()=?¡¿@><~*^_|¬{}[]+-§¶‰⌂·×÷±≈≠≤≥∞•◦‣※☆★◆◇○●□■▲▼◄►';
+  '!#$%&()*+,-./:;<=>?@[]^_{|}~';
 const BASE = ALPHA.length; // must be constant
 const WORD = 2; // 2 symbols per byte (BASE^2 >= 256)
 
