@@ -195,10 +195,15 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
   /* ---- locals & anti-tamper ---- */
   lines.push(`local ${OK}=true`);
   lines.push(`local ${U}=type`);
-  lines.push(`if ${U}(string)~="table" or ${U}(string.byte)~="function" or ${U}(string.sub)~="function" then ${OK}=false end`);
-  lines.push(`if ${U}(table)~="table" or ${U}(table.concat)~="function" then ${OK}=false end`);
-  lines.push(`if ${U}(math)~="table" or ${U}(math.floor)~="function" then ${OK}=false end`);
-  lines.push(`if ((${magA}*4)%2)~=0 then ${OK}=false end`);
+  lines.push(`local ${V}=pcall`);
+  lines.push(`local function ${X}() ${OK}=false end`);
+  lines.push(`if ${U}(string)~="table" or ${U}(string.byte)~="function" or ${U}(string.sub)~="function" or ${U}(string.char)~="function" then ${X}() end`);
+  lines.push(`if ${U}(table)~="table" or ${U}(table.concat)~="function" then ${X}() end`);
+  lines.push(`if ${U}(math)~="table" or ${U}(math.floor)~="function" then ${X}() end`);
+  lines.push(`if ${U}(pcall)~="function" or ${U}(type)~="function" or ${U}(tostring)~="function" then ${X}() end`);
+  lines.push(`do local ${R},${S}=${V}(function() return 214 end) if not ${R} or ${S}~=214 then ${X}() end end`);
+  lines.push(`if ${U}(_G)=="table" then local ${T}=rawget or function(t,k) return t[k] end if ${T}(_G,"pcall")~=nil and ${T}(_G,"pcall")~=pcall then ${X}() end if ${T}(_G,"type")~=nil and ${T}(_G,"type")~=type then ${X}() end if ${T}(_G,"tostring")~=nil and ${T}(_G,"tostring")~=tostring then ${X}() end end`);
+  lines.push(`if ((${magA}*4)%2)~=0 then ${X}() end`);
 
   /* ---- decoys (LLM traps) ---- */
   lines.push(`local ${B}="${luaEsc(j1)}"`);
@@ -259,7 +264,8 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
   lines.push('end)(...)');
 
   return (
-    `--[[ Protected by QyrexObf v1.0.0 | qyrex.hopto.org ]]\n` +
+    `--[[ Protected by QyrexObf v1.0.0 | qyrex.hopto.org ]]
+` +
     lines.join(' ')
   );
 }
