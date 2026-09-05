@@ -35,6 +35,10 @@ function rid(len) {
   return s;
 }
 
+function encStr(s) {
+  return encBuf(Buffer.from(String(s), 'utf8'));
+}
+
 function encByte(b) {
   let n = b & 255;
   let w = '';
@@ -170,6 +174,7 @@ function luaEsc(s) {
  * Emit self-decoding Lua loader.
  * All arithmetic uses % 256 / math.floor — no bit32 required.
  */
+
 function buildLoader(sym, key, sumA, sumB, payloadLen) {
   const A = rid(), B = rid(), C = rid(), D = rid(), E = rid();
   const F = rid(), G = rid(), H = rid(), I = rid(), J = rid();
@@ -178,6 +183,7 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
   const U = rid(), V = rid(), W = rid(), X = rid();
   const ST = rid(), OK = rid();
   const AA = rid(), BB = rid(), CC = rid(), SS = rid();
+  const ES = rid();
 
   const parts = chunkSym(sym);
   const vLit = parts
@@ -189,7 +195,6 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
   const j2 = noise(24 + ri(16));
   const j3 = noise(18 + ri(12));
 
-  /* symbol-only CF states (no numeric state ids) */
   const usedStates = new Set();
   function uniqState() {
     let s;
@@ -203,16 +208,11 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
   const s3 = uniqState();
   const sDead = uniqState();
 
-  const magA = 42 + ri(12);
-  const magB = 4 + (ri(2) * 2); // even-ish pattern; (magA*magB)%2 handled carefully
-  // canary: ((magA * 4) % 2) == 0 always for integer magA
-
+  const e = (s) => luaEsc(encStr(s));
 
   const lines = [];
-
   lines.push('return(function(...)');
 
-  /* ---- hardened integrity + anti-sandbox (Aqua / dtc / hook suite, score-based) ---- */
   lines.push(`local ${OK}=true`);
   lines.push(`local ${U}=type`);
   lines.push(`local ${V}=pcall`);
@@ -224,74 +224,73 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
   lines.push(`local ${AA}=math.floor`);
   lines.push(`local ${BB}=loadstring or load`);
   lines.push(`local ${CC}=0`);
-  /* primitives */
-  lines.push(`if ${U}(string)=="table" and ${U}(${R})=="function" and ${U}(${S})=="function" then ${CC}=${CC}+20 end`);
-  lines.push(`if ${U}(table)=="table" and ${U}(${T})=="function" then ${CC}=${CC}+10 end`);
-  lines.push(`if ${U}(math)=="table" and ${U}(${AA})=="function" then ${CC}=${CC}+10 end`);
-  lines.push(`if ${U}(pcall)=="function" and ${U}(type)=="function" and ${U}(tostring)=="function" then ${CC}=${CC}+15 end`);
+
+  // alphabet + decoder FIRST
+  lines.push(`local ${D}="${ALPHA}"`);
+  lines.push(`local ${E}={}`);
+  lines.push(`for i=1,#${D} do ${E}[${S}(${D},i,i)]=i-1 end`);
+  lines.push(
+    `local function ${K}(z) local o={} local pos=1 local zlen=#z while pos+1<=zlen do local n=0 local i=0 while i<#"~~" do local ch=${S}(z,pos+i,pos+i) n=n*(#${D})+(${E}[ch] or 0) i=i+1 end o[#o+1]=string.char(n%256) pos=pos+(#"~~") end return ${T}(o) end`
+  );
+  lines.push(`local ${ES}=${K}`);
+
+  // primitives with encoded type names
+  lines.push(`if ${U}(string)==${ES}("${e('table')}") and ${U}(${R})==${ES}("${e('function')}") and ${U}(${S})==${ES}("${e('function')}") then ${CC}=${CC}+20 end`);
+  lines.push(`if ${U}(table)==${ES}("${e('table')}") and ${U}(${T})==${ES}("${e('function')}") then ${CC}=${CC}+10 end`);
+  lines.push(`if ${U}(math)==${ES}("${e('table')}") and ${U}(${AA})==${ES}("${e('function')}") then ${CC}=${CC}+10 end`);
+  lines.push(`if ${U}(pcall)==${ES}("${e('function')}") and ${U}(type)==${ES}("${e('function')}") and ${U}(tostring)==${ES}("${e('function')}") then ${CC}=${CC}+15 end`);
   lines.push(`do local a,b=${V}(function() return 214 end) if a and b==214 then ${CC}=${CC}+10 end end`);
   lines.push(`if ((42*4)%2)==0 then ${CC}=${CC}+5 end`);
   lines.push(`do local a=${V}(error,"\\0",0) if a then ${CC}=${CC}-25 else ${CC}=${CC}+10 end end`);
-  lines.push(`if ${R}("A")==65 then ${CC}=${CC}+10 end`);
+  lines.push(`if ${R}(${ES}("${e('A')}"))==65 then ${CC}=${CC}+10 end`);
   lines.push(`if ${AA}(3.9)==3 then ${CC}=${CC}+10 end`);
   lines.push(`if ${AA}(math.pi)==3 then ${CC}=${CC}+10 end`);
   lines.push(`do local t1,t2={},{} if ${W}(t1)~=${W}(t2) then ${CC}=${CC}+8 end end`);
-  /* bit32 optional (Aqua) */
-  lines.push(`if bit32 and ${U}(bit32.bxor)=="function" then if bit32.bxor(85,170)==255 then ${CC}=${CC}+8 else ${CC}=${CC}-20 end end`);
-  /* game / typeof (Aqua) */
-  lines.push(`if game~=nil then if ${U}(game)==${U}({}) then ${CC}=${CC}-40 elseif typeof and typeof(game)~="Instance" then ${CC}=${CC}-40 else ${CC}=${CC}+12 end end`);
+  lines.push(`if bit32 and ${U}(bit32.bxor)==${ES}("${e('function')}") then if bit32.bxor(85,170)==255 then ${CC}=${CC}+8 else ${CC}=${CC}-20 end end`);
+  lines.push(`if game~=nil then if ${U}(game)==${U}({}) then ${CC}=${CC}-40 elseif typeof and typeof(game)~=${ES}("${e('Instance')}") then ${CC}=${CC}-40 else ${CC}=${CC}+12 end end`);
   lines.push(`do local ok,mt=${V}(getmetatable,game) if ok and ${U}(mt)==${U}({}) then ${CC}=${CC}-30 end end`);
-  /* sandbox env (dtc subset + extra) */
-  lines.push(`do local bad=false if ${U}(_G)=="table" then local function has(k) local ok,v=${V}(function() return rawget(_G,k) end) return ok and v~=nil end if has("process") or has("window") or has("document") or has("atob") or has("btoa") or has("__dirname") or has("__filename") or has("lune") or has("lute") or has("rojo") or has("lemur") or has("wally") or has("selene") or has("darklua") or has("busted") or has("Buffer") or has("navigator") or has("localStorage") or has("XMLHttpRequest") then bad=true end if has("dofile") or has("loadfile") then bad=true end end if ${U}(io)=="table" and ${U}(io.open)=="function" then bad=true end if ${U}(os)=="table" and ${U}(os.execute)=="function" then bad=true end if bad then ${CC}=${CC}-70 else ${CC}=${CC}+12 end end`);
-  /* JobId / PlaceId sandbox fingerprints (Aqua) */
-  lines.push(`pcall(function() if game and game.JobId=="00000000-0000-0000-0000-000000000000" then ${CC}=${CC}-50 end end)`);
-  lines.push(`pcall(function() if game and (game.PlaceId==8916037983 or game.GameId==8916037983) then ${CC}=${CC}-50 end end)`);
-  /* LocalPlayer soft presence (Roblox real env) */
-  lines.push(`pcall(function() local P=game:GetService("Players") if P and P.LocalPlayer then ${CC}=${CC}+10 if P.LocalPlayer.UserId==123456789 or P.LocalPlayer.Name=="vole7vin" then ${CC}=${CC}-50 end end end)`);
-  /* hook probes on _G */
-  lines.push(`if ${U}(_G)=="table" then local rg=rawget or function(t,k) return t[k] end local rp=rg(_G,"pcall") local rt=rg(_G,"type") local rl=rg(_G,"loadstring") if rp~=nil and rp~=pcall then ${CC}=${CC}-35 end if rt~=nil and rt~=type then ${CC}=${CC}-35 end if rl~=nil and ${BB}~=nil and rl~=${BB} then ${CC}=${CC}-25 end end`);
+
+  lines.push(`do local bad=false if ${U}(_G)==${ES}("${e('table')}") then local function has(k) local ok,v=${V}(function() return rawget(_G,k) end) return ok and v~=nil end if has(${ES}("${e('process')}")) or has(${ES}("${e('window')}")) or has(${ES}("${e('document')}")) or has(${ES}("${e('atob')}")) or has(${ES}("${e('__dirname')}")) or has(${ES}("${e('lune')}")) or has(${ES}("${e('lute')}")) or has(${ES}("${e('rojo')}")) or has(${ES}("${e('lemur')}")) or has(${ES}("${e('wally')}")) or has(${ES}("${e('Buffer')}")) then bad=true end if has(${ES}("${e('dofile')}")) or has(${ES}("${e('loadfile')}")) then bad=true end end if ${U}(io)==${ES}("${e('table')}") and io and ${U}(io.open)==${ES}("${e('function')}") then bad=true end if ${U}(os)==${ES}("${e('table')}") and os and ${U}(os.execute)==${ES}("${e('function')}") then bad=true end if bad then ${CC}=${CC}-70 else ${CC}=${CC}+12 end end`);
+
+  lines.push(`pcall(function() if game and game[${ES}("${e('JobId')}")]==${ES}("${e('00000000-0000-0000-0000-000000000000')}") then ${CC}=${CC}-50 end end)`);
+  lines.push(`pcall(function() local pid=game and game[${ES}("${e('PlaceId')}")] local gid=game and game[${ES}("${e('GameId')}")] if pid==8916037983 or gid==8916037983 then ${CC}=${CC}-50 end end)`);
+  lines.push(`pcall(function() local P=game:GetService(${ES}("${e('Players')}")) if P and P[${ES}("${e('LocalPlayer')}")] then ${CC}=${CC}+10 local lp=P[${ES}("${e('LocalPlayer')}")] if lp[${ES}("${e('UserId')}")]==123456789 or lp[${ES}("${e('Name')}")]==${ES}("${e('vole7vin')}") then ${CC}=${CC}-50 end end end)`);
+
+  lines.push(`if ${U}(_G)==${ES}("${e('table')}") then local rg=rawget or function(t,k) return t[k] end local rp=rg(_G,${ES}("${e('pcall')}")) local rt=rg(_G,${ES}("${e('type')}")) local rl=rg(_G,${ES}("${e('loadstring')}")) if rp~=nil and rp~=pcall then ${CC}=${CC}-35 end if rt~=nil and rt~=type then ${CC}=${CC}-35 end if rl~=nil and ${BB}~=nil and rl~=${BB} then ${CC}=${CC}-25 end end`);
   lines.push(`if rawequal then if rawequal(pcall,pcall) and rawequal(type,type) then ${CC}=${CC}+8 else ${CC}=${CC}-15 end end`);
-  /* native-ish tostring of loadstring */
-  lines.push(`do local ls=${BB} if ${U}(ls)=="function" then local s=${W}(ls) if s and (string.find(s,"function: 0x") or string.find(s,"builtin") or string.find(s,"function: ")) then ${CC}=${CC}+8 end end end`);
+  lines.push(`do local ls=${BB} if ${U}(ls)==${ES}("${e('function')}") then local s=${W}(ls) if s and (string.find(s,${ES}("${e('function: 0x')}")) or string.find(s,${ES}("${e('builtin')}")) or string.find(s,${ES}("${e('function: ')}"))) then ${CC}=${CC}+8 end end end`);
   lines.push(`if ${CC}<55 then ${X}() end`);
-  lines.push(`if ${U}(${BB})~="function" then ${X}() end`);
+  lines.push(`if ${U}(${BB})~=${ES}("${e('function')}") then ${X}() end`);
 
-  /* ---- decoys (LLM traps) ---- */
-  lines.push(`local function ${O}(...) return nil end`);
-  lines.push(`local function ${Q}(...) return ${O}(...) end`);
-  lines.push(`local ${P}="${luaEsc(j1)}"`);
+  // decoys
+  lines.push(`local function ${O}(a) return a end`);
+  lines.push(`local function ${P}(a,b) if a then return b end return a end`);
+  lines.push(`if false then ${O}(${P}(1,2)) end`);
+
+  // blobs
+  lines.push(`local ${F}="${luaEsc(keySym)}"`);
+  lines.push(`local ${G}="${luaEsc(j1)}"`);
+  lines.push(`local ${H}="${luaEsc(encBuf(Buffer.from([(sumA>>>24)&255,(sumA>>>16)&255,(sumA>>>8)&255,sumA&255])))}"`);
+  lines.push(`local ${I}="${luaEsc(encBuf(Buffer.from([(sumB>>>24)&255,(sumB>>>16)&255,(sumB>>>8)&255,sumB&255])))}"`);
+  lines.push(`local ${B}="${luaEsc(encBuf(Buffer.from([(payloadLen>>>24)&255,(payloadLen>>>16)&255,(payloadLen>>>8)&255,payloadLen&255])))}"`);
+  lines.push(`local ${J}={${vLit}}`);
   lines.push(`local ${C}="${luaEsc(j2)}"`);
+  lines.push(`local ${A}="${luaEsc(j3)}"`);
 
-  /* ---- payload + alphabet ---- */
-  lines.push(`local ${A}={${vLit}}`);
-  lines.push(`local ${D}="${luaEsc(ALPHA)}"`);
-  lines.push(`local ${E}={}`);
-  lines.push(`for ${F}=1,#${D} do ${E}[${S}(${D},${F},${F})]=${F}-1 end`);
-  lines.push(`local ${G}="${luaEsc(keySym)}"`);
-  lines.push(`local ${H}="${luaEsc(encBuf(Buffer.from([sumA>>>24&255,sumA>>>16&255,sumA>>>8&255,sumA&255])))}"`);
-  lines.push(`local ${I}="${luaEsc(encBuf(Buffer.from([sumB>>>24&255,sumB>>>16&255,sumB>>>8&255,sumB&255])))}"`);
-  lines.push(`local ${B}="${luaEsc(encBuf(Buffer.from([payloadLen>>>24&255,payloadLen>>>16&255,payloadLen>>>8&255,payloadLen&255])))}"`);
-  lines.push(`local ${J}=${T}(${A})`);
-
-  /* ---- symbol → bytes ---- */
+  // unscramble
   lines.push(
-    `local function ${K}(z) local o={} local pos=1 local zlen=#z while pos+1<=zlen do local n=0 local i=0 while i<#"~~" do local ch=${S}(z,pos+i,pos+i) n=n*(#"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")+(${E}[ch] or 0) i=i+1 end o[#o+1]=string.char(n%256) pos=pos+(#"~~") end return ${T}(o) end`
+    `local function ${L}(buf,key) local out={} local kl=#key for i=1,#buf do local kb=${R}(key,((i-1)%kl)+1) local b=${R}(buf,i) local x=(b-(kb*(((i*31)+17)%251)+13)-((i*7)%97))%256 if x<0 then x=x+256 end out[i]=string.char(x) end return ${T}(out) end`
   );
 
-  /* ---- reverse scramble ---- */
-  lines.push(
-    `local function ${L}(data,key) local o={} local kl=#key local dlen=#data local i=1 while i<=dlen do local b=${R}(data,i) local k=${R}(key,((i-1)%kl)+1) local p=((i-1)*131+17)%256 local rot=(k%7)+1 local rot2=(p%5)+1 local mix=((k*3+p*5+(i-1))%256) local x=0 local bb=b local mm=mix local bit=0 while bit<8 do local abit=bb%2 local mbit=mm%2 if abit~=mbit then x=x+(2^bit) end bb=${AA}(bb/2) mm=${AA}(mm/2) bit=bit+1 end b=x b=(b+((k+p*3)%256))%256 local hi=${AA}(b/(2^rot2)) local lo=b%(2^rot2) b=(lo*(2^(8-rot2))+hi)%256 b=(b-p+256)%256 hi=${AA}(b/(2^rot)) lo=b%(2^rot) b=(lo*(2^(8-rot))+hi)%256 b=(b-k+256)%256 o[i]=string.char(b) i=i+1 end return ${T}(o) end`
-  );
-
-  /* ---- CF dispatcher (while true — never silent-exit on OK=false mid-path) ---- */
+  // CF
   lines.push(`local ${ST}="${luaEsc(s0)}"`);
-  lines.push(`local ${M},${N},${SS}`);
   lines.push(`while true do`);
   lines.push(`if ${ST}=="${s0}" then`);
   lines.push(`if ${OK} then ${ST}="${s1}" else ${ST}="${sDead}" end`);
   lines.push(`elseif ${ST}=="${s1}" then`);
-  lines.push(`${M}=${K}(${J})`);
-  lines.push(`${N}=${K}(${G})`);
+  lines.push(`${M}=${T}(${J})`);
+  lines.push(`${N}=${K}(${F})`);
+  lines.push(`${M}=${K}(${M})`);
   lines.push(
     `do local h=2654435761 local i=1 local mlen=#${M} while i<=mlen do local b=${R}(${M},i) h=(h+b*(i+30)+((h%89)*17)+13)%4294967296 i=i+1 end local hs=${K}(${H}) local hv=${R}(hs,1)*16777216+${R}(hs,2)*65536+${R}(hs,3)*256+${R}(hs,4) local ls=${K}(${B}) local lv=${R}(ls,1)*16777216+${R}(ls,2)*65536+${R}(ls,3)*256+${R}(ls,4) if h~=hv or mlen~=lv then ${OK}=false ${ST}="${sDead}" else ${ST}="${s2}" end end`
   );
@@ -300,9 +299,11 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
   lines.push(`do local ls=${K}(${B}) local lv=${R}(ls,1)*16777216+${R}(ls,2)*65536+${R}(ls,3)*256+${R}(ls,4) if #${SS}~=lv then ${OK}=false ${ST}="${sDead}" else ${ST}="${s3}" end end`);
   lines.push(`elseif ${ST}=="${s3}" then`);
   lines.push(`local loader=${BB}`);
-  lines.push(`if ${U}(loader)~="function" then return end`);
+  lines.push(`if ${U}(loader)~=${ES}("${e('function')}") then return end`);
   lines.push(`local fn=loader(${SS},"@qyrex")`);
-  lines.push(`if ${U}(fn)=="function" then return fn(...) end`);
+  // anti-dump: wipe payload string after compile
+  lines.push(`${SS}=nil ${M}=nil ${J}=nil`);
+  lines.push(`if ${U}(fn)==${ES}("${e('function')}") then local r=fn(...) fn=nil return r end`);
   lines.push(`return`);
   lines.push(`elseif ${ST}=="${sDead}" then`);
   lines.push(`return`);
@@ -312,10 +313,10 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
 
   return (
     `--[[ Protected by QyrexObf v1.0.0 | qyrex.hopto.org ]]
-` +
-    lines.join(' ')
+` + lines.join(' ')
   );
 }
+
 
 function obfuscate(source) {
   const src = String(source ?? '');
