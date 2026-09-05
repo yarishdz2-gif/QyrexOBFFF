@@ -1,26 +1,25 @@
 /**
- * Symbolic Overload v5 — single-line max density
- * Output: ONE LINE · payload is pure symbol soup · minimal bootstrap
- * NO XOR · NO std Base64 · arithmetic scramble only
+ * QyrexObf 1.6.7 — working symbolic packer
+ * ASCII-only alphabet (Luau string.sub is byte-based)
+ * NO XOR · arithmetic scramble · anti-tamper · header comment
  */
 'use strict';
 const crypto = require('crypto');
 
 const MAX = 1_000_000;
-// Dense alphabet — symbols the user asked for
+// ASCII ONLY — critical for Luau byte strings
 const ALPHA =
   '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz' +
-  '!#$%&/()=?¡°@_:;+*~[]{}|^<>';
-const BASE = ALPHA.length;
-const WORD = 2;
+  '!#$%&/()=?@_:;+*~[]{}|^<>';
+const BASE = ALPHA.length; // 88
+const WORD = 2; // 88^2 = 7744 > 255
 
 const rb = n => crypto.randomBytes(n);
 const ri = n => rb(1)[0] % n;
 
 function rid(n) {
-  n = n || (4 + ri(3));
-  // look like noise: mix letters that look random
-  const A = 'IlOQZabcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYabcdefgh';
+  n = n || (5 + ri(3));
+  const A = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ';
   let s = '_';
   const b = rb(n);
   for (let i = 0; i < n; i++) s += A[b[i] % A.length];
@@ -84,7 +83,7 @@ function chunks(sym) {
   const parts = [];
   let i = 0;
   while (i < sym.length) {
-    let n = 14 + ri(28);
+    let n = 12 + ri(24);
     n -= n % WORD;
     if (n < WORD) n = WORD;
     const take = Math.min(sym.length - i, n);
@@ -95,16 +94,51 @@ function chunks(sym) {
   return parts;
 }
 
+/** Node-side decode to verify roundtrip */
+function decodeBuf(sym) {
+  const map = {};
+  for (let i = 0; i < ALPHA.length; i++) map[ALPHA[i]] = i;
+  const out = [];
+  for (let pos = 0; pos < sym.length; pos += WORD) {
+    let n = 0;
+    for (let i = 0; i < WORD; i++) {
+      const ch = sym[pos + i];
+      n = n * BASE + (map[ch] || 0);
+    }
+    out.push(n % 256);
+  }
+  return Buffer.from(out);
+}
+
+function unscramble(data, key) {
+  const inv = invTable();
+  const out = Buffer.allocUnsafe(data.length);
+  const kl = key.length;
+  for (let i = 0; i < data.length; i++) {
+    let b = data[i];
+    const k = key[i % kl];
+    const p = (i * 131 + 17) & 255;
+    const q = (i * 47 + k * 3) & 255;
+    b = (b + ((p * 3 + k) & 255)) & 255;
+    let m = ((k | 1) * 5) & 255;
+    if (!m) m = 1;
+    b = ((b - q + 256) * inv[k]) & 255;
+    const rot = (k % 7) + 1;
+    b = ((b >>> rot) | (b << (8 - rot))) & 255; // inverse rotate
+    b = (b - k - p + 512) & 255;
+    out[i] = b;
+  }
+  return out;
+}
+
 function build(sym, key, sum, len) {
-  // ultra-short ids
-  const a = rid(5), b = rid(5), c = rid(5), d = rid(5), e = rid(5);
-  const f = rid(5), g = rid(5), h = rid(5), i = rid(5), j = rid(5);
-  const k = rid(5), m = rid(5), n = rid(5), o = rid(5), p = rid(5);
-  const q = rid(5), r = rid(5), s = rid(5), t = rid(5), u = rid(5);
-  const v = rid(5), w = rid(5), x = rid(5), y = rid(5), z = rid(5);
+  const A = rid(), B = rid(), C = rid(), D = rid(), E = rid();
+  const F = rid(), G = rid(), H = rid(), I = rid(), J = rid();
+  const K = rid(), L = rid(), M = rid(), N = rid(), O = rid();
+  const P = rid(), Q = rid(), R = rid(), S = rid(), T = rid();
+  const U = rid(), V = rid(), W = rid(), X = rid(), Y = rid(), Z = rid();
 
   const parts = chunks(sym);
-  // dense table: only symbols/digits inside strings
   const vLit = parts.map((p, idx) => {
     const sep = idx < parts.length - 1 ? (ri(3) ? ',' : ';') : '';
     return `"${p}"${sep}`;
@@ -112,16 +146,103 @@ function build(sym, key, sum, len) {
 
   const keySym = encBuf(key);
   const inv = invTable().join(',');
-  // alphabet as pure string then split at runtime to avoid readable char list
-  const alphaStr = ALPHA.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  // escape alpha for Lua string
+  const alphaLit = ALPHA.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 
-  // SINGLE LINE — everything compacted
-  // anti-tamper kept but minified
-  const code =
-`return(function(...)local ${a}=1;local ${b}=type;local ${c}=rawget;local ${d}=pcall;do if ${b}(pcall)~="function"then ${a}=0 end;if ${b}(string)~="table"and ${b}(string)~="userdata"then ${a}=0 end;if ${b}(table)~="table"and ${b}(table)~="userdata"then ${a}=0 end;if ${b}(math)~="table"and ${b}(math)~="userdata"then ${a}=0 end;if ${b}(loadstring)~="function"and ${b}(load)~="function"then ${a}=0 end;if ${b}(rawget)~="function"or ${b}(rawset)~="function"then ${a}=0 end;if string.byte("A")~=65 then ${a}=0 end;if math.floor(3.9)~=3 then ${a}=0 end;if math.floor(math.pi)~=3 then ${a}=0 end;do local ${e}=${d}(error,"\\0",0)if ${e} then ${a}=0 end end;local ${f},${g}=${d}(function()return(getfenv and getfenv(0))or _G end)if not ${f} or ${b}(${g})~="table"then ${a}=0 end;if ${c} and ${g} then if ${c}(${g},"__builtins__")~=nil then ${a}=0 end;if ${c}(${g},"__name__")~=nil then ${a}=0 end;for _,${h} in ipairs({"fenv","_fenv","genv","hookenv","_env"})do if ${c}(${g},${h})~=nil then ${a}=0 end end end;if game~=nil then if ${b}(game)==${b}({})then ${a}=0 end;if ${b}(typeof)=="function"and typeof(game)=="table"then ${a}=0 end;local ${i},${j}=${d}(getmetatable,game)if ${i} and ${b}(${j})==${b}({})then ${a}=0 end;local ${k},${m}=${d}(function()return game.JobId end)if ${k} and ${m}=="00000000-0000-0000-0000-000000000000"then ${a}=0 end;local ${n},${o}=${d}(function()return game.PlaceId end)if ${n} and ${o}==8916037983 then ${a}=0 end;local ${p},${q}=${d}(function()return game:GetService("Players")end)if ${p} and ${q} then local ${r},${s}=${d}(function()return ${q}.LocalPlayer end)if ${r} and ${s} then local ${t},${u}=${d}(function()return ${s}.UserId end)if ${t} and ${u}==123456789 then ${a}=0 end end end end;local ${v}=(os and os.clock and os.clock())or 0;for ${w}=1,55 do ${d}(function()return ${w}*${w}+9 end)end;local ${x}=(os and os.clock and os.clock())or 0;if ${x}>0 and ${v}>0 and(${x}-${v})>0.45 then ${a}=0 end;if((${14+ri(10)*2}*${2+ri(4)})%2)~=0 then ${a}=0 end end;if ${a}~=1 then return function()end end;local ${y}={${vLit}};local ${rid()}="°!".."#$%&/()=?¡°!".."#$%&/()=?@@@";local ${rid()}=":slkas:s_".."!#$%&/()=?¡";local ${z}="${alphaStr}";local ${rid()}={};local ${rid(4)}=1;local _A={};for _B=1,#${z} do _A[string.sub(${z},_B,_B)]=_B-1 end;local _C="${keySym}";local _D=${sum};local _E={${inv}};local _F=table.concat(${y});local function _G(z)local o,pos={},1;while pos<=#z do local n=0;for i=0,${WORD-1} do local ch=string.sub(z,pos+i,pos+i);n=n*${BASE}+(_A[ch]or 0)end;o[#o+1]=string.char(n%256);pos=pos+${WORD} end;return table.concat(o)end;local function _H(data,key)local o,kl={},#key;for i=1,#data do local b=string.byte(data,i);local k=string.byte(key,((i-1)%kl)+1);local p=((i-1)*131+17)%256;local q=(((i-1)*47)+(k*3))%256;b=(b+((p*3+k)%256))%256;local m=((k%2==0 and k+1 or k)*5)%256;if m==0 then m=1 end;b=((b-q+256)*_E[k+1])%256;local rot=(k%7)+1;local hi=math.floor(b/(2^rot));local lo=b%(2^rot);b=(lo*(2^(8-rot))+hi)%256;b=(b-k-p+512)%256;o[i]=string.char(b)end;return table.concat(o)end;local _I=_G(_F);local _J=_G(_C);do local h=2654435761;for i=1,#_I do local b=string.byte(_I,i);h=(h+b*(i+30)+((h%89)*17)+13)%4294967296 end;if h~=_D or #_I~=${len} then return function()end end end;local _K=_H(_I,_J);if #_K~=${len} then return function()end end;local _L=(loadstring or load)(_K);if type(_L)~="function"then return function()end end;return _L(...)end)(...)`;
+  // Readable multi-line for reliability — still dense payload
+  const lines = [];
+  lines.push(`-- Protect by QyrexObf 1.6.7`);
+  lines.push(`return(function(...)`);
+  // anti-tamper (won't kill non-Roblox / legit clients)
+  lines.push(`local ${A}=1`);
+  lines.push(`local ${B}=type`);
+  lines.push(`local ${C}=rawget`);
+  lines.push(`local ${D}=pcall`);
+  lines.push(`do`);
+  lines.push(`if ${B}(pcall)~="function" then ${A}=0 end`);
+  lines.push(`if ${B}(string)~="table" and ${B}(string)~="userdata" then ${A}=0 end`);
+  lines.push(`if ${B}(table)~="table" and ${B}(table)~="userdata" then ${A}=0 end`);
+  lines.push(`if ${B}(math)~="table" and ${B}(math)~="userdata" then ${A}=0 end`);
+  lines.push(`if ${B}(loadstring)~="function" and ${B}(load)~="function" then ${A}=0 end`);
+  lines.push(`if string.byte("A")~=65 then ${A}=0 end`);
+  lines.push(`if math.floor(3.9)~=3 then ${A}=0 end`);
+  lines.push(`do local ok=${D}(error,"x",0) if ok then ${A}=0 end end`);
+  lines.push(`local ${E},${F}=${D}(function() return (getfenv and getfenv(0)) or _G end)`);
+  lines.push(`if not ${E} or ${B}(${F})~="table" then ${A}=0 end`);
+  lines.push(`if ${C} and ${F} then`);
+  lines.push(`if ${C}(${F},"__builtins__")~=nil then ${A}=0 end`);
+  lines.push(`if ${C}(${F},"__name__")~=nil then ${A}=0 end`);
+  lines.push(`end`);
+  lines.push(`if game~=nil then`);
+  lines.push(`if ${B}(game)==${B}({}) then ${A}=0 end`);
+  lines.push(`local okj,jid=${D}(function() return game.JobId end)`);
+  lines.push(`if okj and jid=="00000000-0000-0000-0000-000000000000" then ${A}=0 end`);
+  lines.push(`local okp,pid=${D}(function() return game.PlaceId end)`);
+  lines.push(`if okp and pid==8916037983 then ${A}=0 end`);
+  lines.push(`end`);
+  lines.push(`end`);
+  lines.push(`if ${A}~=1 then return function() end end`);
 
-  // force single line (strip any accidental newlines)
-  return code.replace(/\s*\n\s*/g, ' ').replace(/\s+/g, ' ').trim();
+  lines.push(`local ${G}={${vLit}}`);
+  lines.push(`local ${H}="${alphaLit}"`);
+  lines.push(`local ${I}={}`);
+  lines.push(`for ${J}=1,#${H} do ${I}[string.sub(${H},${J},${J})]=${J}-1 end`);
+  lines.push(`local ${K}="${keySym}"`);
+  lines.push(`local ${L}=${sum}`);
+  lines.push(`local ${M}={${inv}}`);
+  lines.push(`local ${N}=table.concat(${G})`);
+
+  // decode
+  lines.push(`local function ${O}(z)`);
+  lines.push(`local o,pos={},1`);
+  lines.push(`while pos<=#z do`);
+  lines.push(`local n=0`);
+  lines.push(`for i=0,${WORD-1} do`);
+  lines.push(`local ch=string.sub(z,pos+i,pos+i)`);
+  lines.push(`n=n*${BASE}+(${I}[ch] or 0)`);
+  lines.push(`end`);
+  lines.push(`o[#o+1]=string.char(n%256)`);
+  lines.push(`pos=pos+${WORD}`);
+  lines.push(`end`);
+  lines.push(`return table.concat(o)`);
+  lines.push(`end`);
+
+  // unscramble — must match Node unscramble exactly
+  lines.push(`local function ${P}(data,key)`);
+  lines.push(`local o,kl={},#key`);
+  lines.push(`for i=1,#data do`);
+  lines.push(`local b=string.byte(data,i)`);
+  lines.push(`local k=string.byte(key,((i-1)%kl)+1)`);
+  lines.push(`local p=((i-1)*131+17)%256`);
+  lines.push(`local q=(((i-1)*47)+(k*3))%256`);
+  lines.push(`b=(b+((p*3+k)%256))%256`);
+  lines.push(`local m=((k%2==0 and k+1 or k)*5)%256`);
+  lines.push(`if m==0 then m=1 end`);
+  lines.push(`b=((b-q+256)*${M}[k+1])%256`);
+  lines.push(`local rot=(k%7)+1`);
+  lines.push(`local hi=math.floor(b/(2^rot))`);
+  lines.push(`local lo=b%(2^rot)`);
+  lines.push(`b=(lo*(2^(8-rot))+hi)%256`);
+  lines.push(`b=(b-k-p+512)%256`);
+  lines.push(`o[i]=string.char(b)`);
+  lines.push(`end`);
+  lines.push(`return table.concat(o)`);
+  lines.push(`end`);
+
+  lines.push(`local ${Q}=${O}(${N})`);
+  lines.push(`local ${R}=${O}(${K})`);
+  lines.push(`do local h=2654435761`);
+  lines.push(`for i=1,#${Q} do local b=string.byte(${Q},i) h=(h+b*(i+30)+((h%89)*17)+13)%4294967296 end`);
+  lines.push(`if h~=${L} or #${Q}~=${len} then return function() end end`);
+  lines.push(`end`);
+  lines.push(`local ${S}=${P}(${Q},${R})`);
+  lines.push(`if #${S}~=${len} then return function() end end`);
+  lines.push(`local ${T}=(loadstring or load)(${S})`);
+  lines.push(`if type(${T})~="function" then return function() end end`);
+  lines.push(`return ${T}(...)`);
+  lines.push(`end)(...)`);
+
+  return lines.join('\n');
 }
 
 function obfuscate(source) {
@@ -130,20 +251,30 @@ function obfuscate(source) {
   if (Buffer.byteLength(src, 'utf8') > MAX) throw new Error('Too large');
 
   const raw = Buffer.from(src, 'utf8');
-  const key = rb(36 + ri(16));
+  const key = rb(32 + ri(8));
   const scrambled = scramble(raw, key);
   const sum = checksum(scrambled);
   const sym = encBuf(scrambled);
-  const code = build(sym, key, sum, scrambled.length);
 
+  // verify roundtrip in Node before emitting
+  const decoded = decodeBuf(sym);
+  if (!decoded.equals(scrambled)) {
+    throw new Error('Internal encode/decode mismatch');
+  }
+  const plain = unscramble(decoded, key);
+  if (!plain.equals(raw)) {
+    throw new Error('Internal scramble/unscramble mismatch');
+  }
+
+  const code = build(sym, key, sum, scrambled.length);
   return {
     code,
     stats: {
       inputBytes: raw.length,
       outputBytes: Buffer.byteLength(code, 'utf8'),
-      mode: 'symbolic-oneline-v5',
-      encoding: 'arith-scramble + dense-alphabet (NO xor)',
-      lines: 1
+      mode: 'QyrexObf-1.6.7',
+      encoding: 'arith-scramble + ascii-alphabet (NO xor)',
+      verified: true
     }
   };
 }
