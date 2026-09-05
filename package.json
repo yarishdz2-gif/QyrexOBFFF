@@ -1,7 +1,7 @@
 {
   "name": "qyrexobf",
-  "version": "2.0.0",
-  "description": "QyrexObf — military-grade Lua/Luau obfuscation server",
+  "version": "2.1.0",
+  "description": "QyrexObf — hardened Lua/Luau obfuscation server (zero-error loader)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

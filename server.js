@@ -10,16 +10,20 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 
 app.disable('x-powered-by');
-app.use(helmet({
-  contentSecurityPolicy: false,
-  crossOriginEmbedderPolicy: false
-}));
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false
+  })
+);
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
-app.use(express.static(path.join(__dirname, 'public'), {
-  maxAge: '1h',
-  etag: true
-}));
+app.use(
+  express.static(path.join(__dirname, 'public'), {
+    maxAge: '1h',
+    etag: true
+  })
+);
 
 app.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'QyrexObf', version: VERSION });
