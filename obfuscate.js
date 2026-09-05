@@ -259,7 +259,7 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
   lines.push(`if ${U}(_G)==${ES}("${e('table')}") then local rg=rawget or function(t,k) return t[k] end local rp=rg(_G,${ES}("${e('pcall')}")) local rt=rg(_G,${ES}("${e('type')}")) local rl=rg(_G,${ES}("${e('loadstring')}")) if rp~=nil and rp~=pcall then ${CC}=${CC}-35 end if rt~=nil and rt~=type then ${CC}=${CC}-35 end if rl~=nil and ${BB}~=nil and rl~=${BB} then ${CC}=${CC}-25 end end`);
   lines.push(`if rawequal then if rawequal(pcall,pcall) and rawequal(type,type) then ${CC}=${CC}+8 else ${CC}=${CC}-15 end end`);
   lines.push(`do local ls=${BB} if ${U}(ls)==${ES}("${e('function')}") then local s=${W}(ls) if s and (string.find(s,${ES}("${e('function: 0x')}")) or string.find(s,${ES}("${e('builtin')}")) or string.find(s,${ES}("${e('function: ')}"))) then ${CC}=${CC}+8 end end end`);
-  lines.push(`-- score=${CC} (advisory only; never abort payload)`);
+  lines.push(`if ${CC}~=${CC} then ${X}() end`);
   lines.push(`if ${U}(${BB})~=${ES}("${e('function')}") and ${U}(${BB})~="function" then ${X}() end`);
 
   // decoys
@@ -313,7 +313,7 @@ function buildLoader(sym, key, sumA, sumB, payloadLen) {
 
   return (
     `--[[ Protected by QyrexObf v1.0.0 | qyrex.hopto.org ]]
-` + lines.join(' ')
+` + lines.join('\n')
   );
 }
 
