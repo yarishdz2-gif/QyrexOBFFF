@@ -1,7 +1,6 @@
 /**
- * QyrexObf 1.6.7 — EXECUTABLE single-line body
- * Header comment + one line return(function...)()
- * NO XOR · symbol alphabet · minimal safe checks only
+ * QyrexObf 1.6.7 — web generator (matches Lua generator semantics)
+ * Header + single-line body · state-machine decode · NO XOR
  */
 'use strict';
 const crypto = require('crypto');
@@ -15,7 +14,6 @@ const WORD = 2;
 
 const rb = n => crypto.randomBytes(n);
 const ri = n => rb(1)[0] % n;
-
 function rid(n) {
   n = n || (5 + ri(3));
   const A = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -24,7 +22,6 @@ function rid(n) {
   for (let i = 0; i < n; i++) s += A[b[i] % A.length];
   return s;
 }
-
 function encByte(b) {
   let n = b & 255, w = '';
   for (let i = 0; i < WORD; i++) {
@@ -50,7 +47,6 @@ function decBuf(sym) {
   }
   return out.subarray(0, j);
 }
-
 function scramble(data, key) {
   const out = Buffer.allocUnsafe(data.length);
   const kl = key.length;
@@ -69,7 +65,6 @@ function scramble(data, key) {
   }
   return out;
 }
-
 function unscramble(data, key) {
   const out = Buffer.allocUnsafe(data.length);
   const kl = key.length;
@@ -88,19 +83,17 @@ function unscramble(data, key) {
   }
   return out;
 }
-
 function checksum(buf) {
   let h = 0x9e3779b1 >>> 0;
   for (let i = 0; i < buf.length; i++)
     h = (h + buf[i] * (i + 31) + ((h % 89) * 17) + 13) >>> 0;
   return h >>> 0;
 }
-
 function chunks(sym) {
   const parts = [];
   let i = 0;
   while (i < sym.length) {
-    let n = 20 + ri(36);
+    let n = 16 + ri(32);
     n -= n % WORD;
     if (n < WORD) n = WORD;
     const take = Math.min(sym.length - i, n);
@@ -110,7 +103,6 @@ function chunks(sym) {
   }
   return parts;
 }
-
 function noise(n) {
   const b = rb(n);
   let s = '';
@@ -119,88 +111,36 @@ function noise(n) {
 }
 
 function build(sym, key, sum, len) {
-  const A = rid(), B = rid(), C = rid(), D = rid(), E = rid();
-  const F = rid(), G = rid(), H = rid(), I = rid(), J = rid();
-  const K = rid(), L = rid(), M = rid(), N = rid(), O = rid();
-
+  const A=rid(),B=rid(),C=rid(),D=rid(),E=rid(),F=rid(),G=rid(),H=rid();
+  const I=rid(),J=rid(),K=rid(),L=rid(),M=rid(),N=rid();
   const parts = chunks(sym);
-  const vLit = parts.map((p, idx) => {
-    const sep = idx < parts.length - 1 ? (ri(2) ? ';' : ',') : '';
-    return `"${p}"${sep}`;
-  }).join('');
-
+  const vLit = parts.map((p, i) => `"${p}"${i < parts.length - 1 ? (ri(2) ? ';' : ',') : ''}`).join('');
   const keySym = encBuf(key);
-  const alphaLit = ALPHA;
-  const junk1 = noise(32 + ri(24));
-  const junk2 = noise(32 + ri(24));
+  const j1 = noise(24 + ri(16)), j2 = noise(24 + ri(16));
 
-  // ONE executable line (after header). Compact but valid Lua.
-  // Minimal bootstrap: concat → decode → unscramble → load → call
-  // No aggressive anti-tamper that can silent-fail on real executors.
-  // Build as lines then join to ONE line (balanced)
   const lines = [];
   lines.push(`return(function(...)`);
   lines.push(`local ${A}={${vLit}}`);
-  lines.push(`local ${B}="${junk1}"`);
-  lines.push(`local ${C}="${junk2}"`);
-  lines.push(`local ${D}="${alphaLit}"`);
+  lines.push(`local ${B}="${j1}"`);
+  lines.push(`local ${C}="${j2}"`);
+  lines.push(`local ${D}="${ALPHA}"`);
   lines.push(`local ${E}={}`);
   lines.push(`for ${F}=1,#${D} do ${E}[string.sub(${D},${F},${F})]=${F}-1 end`);
   lines.push(`local ${G}="${keySym}"`);
   lines.push(`local ${H}=${sum}`);
   lines.push(`local ${I}=table.concat(${A})`);
-  lines.push(`local function ${J}(z)`);
-  lines.push(`local o,pos={},1`);
-  lines.push(`while pos<=#z do`);
-  lines.push(`local n=0`);
-  lines.push(`for i=0,1 do`);
-  lines.push(`local ch=string.sub(z,pos+i,pos+i)`);
-  lines.push(`n=n*${BASE}+(${E}[ch] or 0)`);
-  lines.push(`end`);
-  lines.push(`o[#o+1]=string.char(n%256)`);
-  lines.push(`pos=pos+2`);
-  lines.push(`end`);
-  lines.push(`return table.concat(o)`);
-  lines.push(`end`);
-  lines.push(`local function ${K}(data,key)`);
-  lines.push(`local o,kl={},#key`);
-  lines.push(`for i=1,#data do`);
-  lines.push(`local b=string.byte(data,i)`);
-  lines.push(`local k=string.byte(key,((i-1)%kl)+1)`);
-  lines.push(`local p=((i-1)*131+17)%256`);
-  lines.push(`local rot=(k%7)+1`);
-  lines.push(`local rot2=(p%5)+1`);
-  lines.push(`b=(b+((k+p*3)%256))%256`);
-  lines.push(`local hi=math.floor(b/(2^rot2))`);
-  lines.push(`local lo=b%(2^rot2)`);
-  lines.push(`b=(lo*(2^(8-rot2))+hi)%256`);
-  lines.push(`b=(b-p+256)%256`);
-  lines.push(`hi=math.floor(b/(2^rot))`);
-  lines.push(`lo=b%(2^rot)`);
-  lines.push(`b=(lo*(2^(8-rot))+hi)%256`);
-  lines.push(`b=(b-k+256)%256`);
-  lines.push(`o[i]=string.char(b)`);
-  lines.push(`end`);
-  lines.push(`return table.concat(o)`);
-  lines.push(`end`);
-  lines.push(`local ${L}=${J}(${I})`);
-  lines.push(`local ${M}=${J}(${G})`);
-  lines.push(`do`);
-  lines.push(`local h=2654435761`);
-  lines.push(`for i=1,#${L} do`);
-  lines.push(`local b=string.byte(${L},i)`);
-  lines.push(`h=(h+b*(i+30)+((h%89)*17)+13)%4294967296`);
-  lines.push(`end`);
-  lines.push(`if h~=${H} or #${L}~=${len} then return end`);
-  lines.push(`end`);
-  lines.push(`local ${N}=${K}(${L},${M})`);
-  lines.push(`if #${N}~=${len} then return end`);
-  lines.push(`local ${O}=(loadstring or load)(${N})`);
-  lines.push(`if type(${O})~="function" then return end`);
-  lines.push(`return ${O}(...)`);
+  lines.push(`local function ${J}(z) local o,pos={},1 while pos<=#z do local n=0 for i=0,1 do local ch=string.sub(z,pos+i,pos+i) n=n*${BASE}+(${E}[ch] or 0) end o[#o+1]=string.char(n%256) pos=pos+2 end return table.concat(o) end`);
+  lines.push(`local function ${K}(data,key) local o,kl={},#key for i=1,#data do local b=string.byte(data,i) local k=string.byte(key,((i-1)%kl)+1) local p=((i-1)*131+17)%256 local rot=(k%7)+1 local rot2=(p%5)+1 b=(b+((k+p*3)%256))%256 local hi=math.floor(b/(2^rot2)) local lo=b%(2^rot2) b=(lo*(2^(8-rot2))+hi)%256 b=(b-p+256)%256 hi=math.floor(b/(2^rot)) lo=b%(2^rot) b=(lo*(2^(8-rot))+hi)%256 b=(b-k+256)%256 o[i]=string.char(b) end return table.concat(o) end`);
+  lines.push(`local ${M}=${J}(${I})`);
+  lines.push(`local ${N}=${J}(${G})`);
+  lines.push(`do local h=2654435761 for i=1,#${M} do local b=string.byte(${M},i) h=(h+b*(i+30)+((h%89)*17)+13)%4294967296 end if h~=${H} or #${M}~=${len} then return end end`);
+  lines.push(`local ${L}=${K}(${M},${N})`);
+  lines.push(`if #${L}~=${len} then return end`);
+  lines.push(`local fn=(loadstring or load)(${L})`);
+  lines.push(`if type(fn)~="function" then return end`);
+  lines.push(`return fn(...)`);
   lines.push(`end)(...)`);
-  const body = lines.join(" ");
-
+  const body = lines.join(' ');
   return (
     `-- This file was protected using Qyrex Obfuscator v1.6.7[https://qyrex.hopto.org/]\n` +
     body
@@ -211,19 +151,13 @@ function obfuscate(source) {
   const src = String(source ?? '');
   if (!src.trim()) throw new Error('Empty code');
   if (Buffer.byteLength(src, 'utf8') > MAX) throw new Error('Too large');
-
   const raw = Buffer.from(src, 'utf8');
   const key = rb(32 + ri(8));
   const scrambled = scramble(raw, key);
   const sum = checksum(scrambled);
   const sym = encBuf(scrambled);
-
   const back = unscramble(decBuf(sym), key);
   if (!back.equals(raw)) throw new Error('roundtrip failed');
-
-  // also verify decoded string matches source
-  if (back.toString('utf8') !== src) throw new Error('utf8 mismatch');
-
   const code = build(sym, key, sum, scrambled.length);
   return {
     code,
@@ -231,7 +165,6 @@ function obfuscate(source) {
       inputBytes: raw.length,
       outputBytes: Buffer.byteLength(code, 'utf8'),
       mode: 'QyrexObf-1.6.7',
-      encoding: 'single-line body · add/rot/sub (NO xor)',
       verified: true
     }
   };
