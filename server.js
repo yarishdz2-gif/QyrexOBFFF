@@ -14,6 +14,7 @@ const DB_FILE = path.join(DATA_DIR, 'users.json');
 const SESSION_TTL = 1000 * 60 * 60 * 24 * 7;
 const REGISTRATION_WINDOW = 1000 * 60 * 60 * 24;
 const MAX_REGISTRATIONS_PER_IP = 1;
+const ADMIN_USERNAME = 'qyrex';
 const DISCORD_INVITE = 'https://discord.gg/YzCsksufde';
 
 // Needed when the site is behind Render/Cloudflare/etc.
@@ -87,6 +88,7 @@ function publicUser(u) {
     id: u.id,
     username: u.username,
     email: u.email,
+    isAdmin: norm(u.username) === ADMIN_USERNAME || u.isAdmin === true,
     tokens: u.tokens,
     createdAt: u.createdAt,
     stats: u.stats,
@@ -151,13 +153,18 @@ app.post('/api/register', (req, res) => {
 
     const p = makePassword(password);
     const id = crypto.randomUUID();
+    if (norm(username) === ADMIN_USERNAME && d.users.some(u => norm(u.username) === ADMIN_USERNAME)) {
+      return res.status(409).json({ ok: false, error: 'El usuario qyrex ya existe.' });
+    }
+
     const user = {
       id,
       username,
       email,
       salt: p.salt,
       passwordHash: p.hash,
-      tokens: 0,
+      isAdmin: norm(username) === ADMIN_USERNAME,
+      tokens: 1,
       createdAt: new Date().toISOString(),
       lastIp: ip,
       stats: { obfuscations: 0, bytes: 0 },
@@ -249,6 +256,35 @@ app.post('/api/purchases/create', auth, (req, res) => {
 });
 
 app.get('/api/purchases', auth, (req, res) => res.json({ ok: true, purchases: req.db.purchases.filter(x => x.userId === req.user.id).slice(-50).reverse() }));
+
+app.get('/api/admin/overview', auth, (req, res) => {
+  if (!req.user.isAdmin && norm(req.user.username) !== ADMIN_USERNAME) return res.status(403).json({ ok: false, error: 'Acceso de administrador requerido.' });
+  const users = req.db.users;
+  const purchases = req.db.purchases;
+  res.json({ ok: true, stats: { users: users.length, tokens: users.reduce((n,u)=>n+Number(u.tokens||0),0), obfuscations: users.reduce((n,u)=>n+Number(u.stats?.obfuscations||0),0), purchases: purchases.length, pendingPurchases: purchases.filter(p=>p.status==='pending').length }, users: users.map(u=>({ id:u.id, username:u.username, email:u.email, tokens:Number(u.tokens||0), isAdmin:!!u.isAdmin || norm(u.username)===ADMIN_USERNAME, createdAt:u.createdAt, stats:u.stats, lastIp:u.lastIp })), purchases: purchases.slice(-100).reverse() });
+});
+
+app.post('/api/admin/users/:id/tokens', auth, (req, res) => {
+  if (!req.user.isAdmin && norm(req.user.username) !== ADMIN_USERNAME) return res.status(403).json({ ok: false, error: 'Acceso de administrador requerido.' });
+  const amount = Math.floor(Number(req.body?.amount));
+  if (!Number.isFinite(amount) || amount === 0 || Math.abs(amount) > 100000) return res.status(400).json({ ok: false, error: 'Cantidad inválida.' });
+  const target = req.db.users.find(u=>u.id===req.params.id);
+  if (!target) return res.status(404).json({ ok: false, error: 'Usuario no encontrado.' });
+  target.tokens = Math.max(0, Number(target.tokens||0) + amount);
+  save(req.db);
+  res.json({ ok:true, user:publicUser(target) });
+});
+
+app.delete('/api/admin/users/:id', auth, (req, res) => {
+  if (!req.user.isAdmin && norm(req.user.username) !== ADMIN_USERNAME) return res.status(403).json({ ok: false, error: 'Acceso de administrador requerido.' });
+  const target = req.db.users.find(u=>u.id===req.params.id);
+  if (!target) return res.status(404).json({ ok:false, error:'Usuario no encontrado.' });
+  if (norm(target.username) === ADMIN_USERNAME) return res.status(400).json({ ok:false, error:'No puedes eliminar al administrador principal.' });
+  req.db.users = req.db.users.filter(u=>u.id!==target.id);
+  for (const [token,s] of Object.entries(req.db.sessions)) if (s.userId===target.id) delete req.db.sessions[token];
+  save(req.db);
+  res.json({ok:true});
+});
 
 // After creating a purchase, users are directed to the official Qyrex Discord.
 // Token credit must be performed after your real payment provider confirms the purchase.
