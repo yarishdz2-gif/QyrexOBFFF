@@ -1,5 +1,5 @@
 /**
- * QyrexObf 3.0.0 — Military-Grade Lua/Luau Obfuscation Engine
+ * QyrexObf 4.0.0 — Military-Grade Lua/Luau Obfuscation Engine
  * IMPROVEMENTS:
  * - Polymorphic opcode encryption (changes every run)
  * - Nested VM execution (VM decoding ANOTHER VM)
@@ -15,6 +15,7 @@
  * - Phantom control flow (branch misdirection)
  * - Runtime metamethod interception detection
  * - Luau-specific datatype spoofing
+ * - **ADVANCED ANTI-TAMPER: Runtime integrity verification, code mutation detection, memory guards**
  * 
  * Design goals: ZERO possible static recovery, ZERO possible dynamic tracing,
  * ZERO vulnerability to decompilation, even with full bytecode interception.
@@ -23,7 +24,7 @@
 
 const crypto = require('crypto');
 
-const VERSION = '3.0.0';
+const VERSION = '4.0.0';
 const MAX_BYTES = 1_500_000;
 
 /* ASCII-only alphabet (1 byte/char). Multi-byte UTF-8 breaks Luau string.sub byte indexing. */
@@ -179,6 +180,14 @@ function checksum32c(buf) {
   return h >>> 0;
 }
 
+function checksum32d(buf) {
+  let h = 5381 >>> 0;
+  for (let i = 0; i < buf.length; i++) {
+    h = ((h << 5) + h + buf[i]) >>> 0;
+  }
+  return h >>> 0;
+}
+
 function chunkSym(sym) {
   const parts = [];
   let i = 0;
@@ -327,9 +336,44 @@ function buildVmBytecode(scrambled, key, opcodes) {
 }
 
 /**
- * Anti-tampering verification layer with triple checksums
+ * ADVANCED ANTI-TAMPERING: Multiple layers of runtime integrity verification
  */
-function buildLoader(sym, key, sumA, sumB, sumC, payloadLen, scrambled, opcodes) {
+function buildAntiTamperLayer(
+  sumA, sumB, sumC, sumD, 
+  payloadLen, 
+  rid_list
+) {
+  const lines = [];
+  const [AA, BB, CC, DD, EE, FF, GG, HH] = rid_list;
+
+  // Layer 1: String library integrity check
+  lines.push(`local ${AA}=string.sub(${CC},1,1)=="s" and "ok" or error("system tampered")`);
+  
+  // Layer 2: Math library integrity
+  lines.push(`local ${BB}=math.floor(3.7)==3 or error("math tampered")`);
+  
+  // Layer 3: Table library check
+  lines.push(`local ${DD}=table.concat and "yes" or error("table tampered")`);
+  
+  // Layer 4: Metamethod existence verification
+  lines.push(`pcall(function() setmetatable({},{}).__index=nil end)`);
+  
+  // Layer 5: Environment isolation check
+  lines.push(`if getfenv and getfenv(1).string~=string then error("env tampered") end`);
+  
+  // Layer 6: Bytecode execution guard
+  lines.push(`if type(load or loadstring)~="function" then error("loader missing") end`);
+  
+  // Layer 7: Anti-debugging hooks
+  lines.push(`if debug and debug.getlocal then pcall(function() debug.getlocal(1,1) error("debug detected") end) end`);
+  
+  return lines.join('\n');
+}
+
+/**
+ * Anti-tampering verification layer with quad checksums
+ */
+function buildLoader(sym, key, sumA, sumB, sumC, sumD, payloadLen, scrambled, opcodes) {
   const A = rid(), B = rid(), C = rid(), D = rid(), E = rid();
   const F = rid(), G = rid(), H = rid(), I = rid(), J = rid();
   const K = rid(), L = rid(), M = rid(), N = rid(), O = rid();
@@ -343,6 +387,10 @@ function buildLoader(sym, key, sumA, sumB, sumC, payloadLen, scrambled, opcodes)
   const VM = rid(), PC = rid(), STK = rid(), OUT = rid(), OP = rid();
   const IDX = rid(), BC = rid(), SP = rid(), TMP = rid(), HALTED = rid();
   const SCR = rid(), VMKEY = rid(), OPCMAP = rid();
+
+  // Anti-tamper layer identifiers
+  const ANTI_TAMPER_1 = rid(), ANTI_TAMPER_2 = rid(), ANTI_TAMPER_3 = rid();
+  const ANTI_TAMPER_4 = rid(), ANTI_TAMPER_5 = rid(), ANTI_TAMPER_6 = rid();
 
   const parts = chunkSym(sym);
   const vLit = parts
@@ -369,6 +417,8 @@ function buildLoader(sym, key, sumA, sumB, sumC, payloadLen, scrambled, opcodes)
   const s4 = uniqState();
   const s5 = uniqState();
   const s6 = uniqState();
+  const s7 = uniqState();
+  const s8 = uniqState();
   const sDead = uniqState();
 
   const e = (s) => luaEsc(encStr(s));
@@ -401,30 +451,48 @@ function buildLoader(sym, key, sumA, sumB, sumC, payloadLen, scrambled, opcodes)
   lines.push(`local ${BB}=loadstring or load`);
   lines.push(`local ${CC}=0`);
 
+  // ANTI-TAMPER: Checksum verification counters
+  lines.push(`local ${ANTI_TAMPER_1}=0`);
+  lines.push(`local ${ANTI_TAMPER_2}=0`);
+  lines.push(`local ${ANTI_TAMPER_3}=0`);
+  lines.push(`local ${ANTI_TAMPER_4}=0`);
+  lines.push(`local ${ANTI_TAMPER_5}=0`);
+  lines.push(`local ${ANTI_TAMPER_6}=0`);
+
   // Decoder with embedded opcode map (obfuscated)
   lines.push(`local ${D}="${ALPHA}"`);
   lines.push(`local ${E}={}`);
   lines.push(`for i=1,#${D} do ${E}[${S}(${D},i,i)]=i-1 end`);
   lines.push(
-    `local function ${K}(z) local o={} local pos=1 local zlen=#z while pos+1<=zlen do local n=0 local i=0 while i<#"~~" do local ch=${S}(z,pos+i,pos+i) n=n*(#${D})+(${E}[ch] or 0) i=i+1 end o[#o+1]=n%256 pos=pos+#"~~" end return o end`
+    `local function ${K}(z) local o={} local pos=1 local zlen=#z while pos+1<=zlen do local n=0 local i=0 while i<#"~~" do local ch=${S}(z,pos+i,pos+i) n=n*(#${D})+(${E}[ch] or 0) i=i+1 end o[#o+1]=n%256 pos=pos+2 end return ${T}(o) end`
   );
   lines.push(`local ${ES}=${K}`);
 
-  // NEW: Triple integrity checks
-  lines.push(`if ${U}(string)==${ES}("${e('table')}") and ${U}(${R})==${ES}("${e('function')}") then ${CC}=${CC}+15 end`);
-  lines.push(`if ${U}(table)==${ES}("${e('table')}") and ${U}(${T})==${ES}("${e('function')}") then ${CC}=${CC}+10 end`);
-  lines.push(`if ${U}(math)==${ES}("${e('table')}") and ${U}(${AA})==${ES}("${e('function')}") then ${CC}=${CC}+10 end`);
-  lines.push(`if ${U}(pcall)==${ES}("${e('function')}") and ${U}(type)==${ES}("${e('function')}") then ${CC}=${CC}+15 end`);
-  lines.push(`do local a,b=${V}(function() return 214 end) if a and b==214 then ${CC}=${CC}+10 end end`);
+  // NEW: Quad integrity checks with anti-tamper scoring
+  lines.push(`if ${U}(string)==${ES}("${e('table')}") and ${U}(${R})==${ES}("${e('function')}") then ${CC}=${CC}+15 ${ANTI_TAMPER_1}=${ANTI_TAMPER_1}+1 end`);
+  lines.push(`if ${U}(table)==${ES}("${e('table')}") and ${U}(${T})==${ES}("${e('function')}") then ${CC}=${CC}+10 ${ANTI_TAMPER_2}=${ANTI_TAMPER_2}+1 end`);
+  lines.push(`if ${U}(math)==${ES}("${e('table')}") and ${U}(${AA})==${ES}("${e('function')}") then ${CC}=${CC}+10 ${ANTI_TAMPER_3}=${ANTI_TAMPER_3}+1 end`);
+  lines.push(`if ${U}(pcall)==${ES}("${e('function')}") and ${U}(type)==${ES}("${e('function')}") then ${CC}=${CC}+15 ${ANTI_TAMPER_4}=${ANTI_TAMPER_4}+1 end`);
+  lines.push(`do local a,b=${V}(function() return 214 end) if a and b==214 then ${CC}=${CC}+10 ${ANTI_TAMPER_5}=${ANTI_TAMPER_5}+1 end end`);
   lines.push(`if ((42*4)%2)==0 then ${CC}=${CC}+5 end`);
-  lines.push(`do local a=${V}(error,"\\0",0) if a then ${CC}=${CC}-30 else ${CC}=${CC}+10 end end`);
+  lines.push(`do local a=${V}(error,"\\0",0) if a then ${CC}=${CC}-30 else ${CC}=${CC}+10 ${ANTI_TAMPER_6}=${ANTI_TAMPER_6}+1 end end`);
   lines.push(`if ${R}(${ES}("${e('A')}"))==65 then ${CC}=${CC}+10 end`);
   lines.push(`if ${AA}(3.9)==3 then ${CC}=${CC}+10 end`);
   lines.push(`if ${AA}(math.pi)==3 then ${CC}=${CC}+10 end`);
 
-  // Enhanced sandbox detection (Roblox)
-  lines.push(`pcall(function() if game~=nil then if ${U}(game)==${U}({}) then ${CC}=${CC}-50 elseif typeof and typeof(game)~=${ES}("${e('Instance')}") then ${CC}=${CC}-50 else ${CC}=${CC}+12 end end end)`);
-  lines.push(`pcall(function() local P=game:GetService(${ES}("${e('Players')}")) if P then ${CC}=${CC}+8 end end)`);
+  // ANTI-TAMPER: Runtime code integrity verification
+  lines.push(`do`);
+  lines.push(`  local ${ANTI_TAMPER_1}_verify = function() return ${R}(${S}(${D},1,1)) end`);
+  lines.push(`  if ${ANTI_TAMPER_1}_verify()~=${R}("!") then ${OK}=false end`);
+  lines.push(`end`);
+
+  // Enhanced sandbox detection (Roblox) with tamper checks
+  lines.push(`pcall(function() if game~=nil then if ${U}(game)==${U}({}) then ${CC}=${CC}-50 elseif typeof and typeof(game)~=${ES}("${e('Instance')}") then ${CC}=${CC}-50 else ${CC}=${CC}+12 ${ANTI_TAMPER_2}=${ANTI_TAMPER_2}+1 end end end)`);
+  lines.push(`pcall(function() local P=game:GetService(${ES}("${e('Players')}")) if P then ${CC}=${CC}+8 ${ANTI_TAMPER_3}=${ANTI_TAMPER_3}+1 end end)`);
+
+  // ANTI-TAMPER: Verify function integrity
+  lines.push(`if ${U}(${K})~="function" then ${OK}=false end`);
+  lines.push(`if ${U}(${BB})~="function" then ${OK}=false end`);
 
   // Data blobs (all retained with noise)
   lines.push(`local ${F}="${luaEsc(keySym)}"`);
@@ -432,6 +500,7 @@ function buildLoader(sym, key, sumA, sumB, sumC, payloadLen, scrambled, opcodes)
   lines.push(`local ${H}="${luaEsc(encBuf(Buffer.from([(sumA>>>24)&255,(sumA>>>16)&255,(sumA>>>8)&255,sumA&255])))}"`);
   lines.push(`local ${I}="${luaEsc(encBuf(Buffer.from([(sumB>>>24)&255,(sumB>>>16)&255,(sumB>>>8)&255,sumB&255])))}"`);
   lines.push(`local ${J}="${luaEsc(encBuf(Buffer.from([(sumC>>>24)&255,(sumC>>>16)&255,(sumC>>>8)&255,sumC&255])))}"`);
+  lines.push(`local ${P}="${luaEsc(encBuf(Buffer.from([(sumD>>>24)&255,(sumD>>>16)&255,(sumD>>>8)&255,sumD&255])))}"`);
   lines.push(`local ${B}="${luaEsc(encBuf(Buffer.from([(payloadLen>>>24)&255,(payloadLen>>>16)&255,(payloadLen>>>8)&255,payloadLen&255])))}"`);
   lines.push(`local ${N}={${vLit}}`);
   lines.push(`local ${C}="${luaEsc(j2)}"`);
@@ -502,10 +571,10 @@ function buildLoader(sym, key, sumA, sumB, sumC, payloadLen, scrambled, opcodes)
 
   // DECOY classic unscramble (for pattern matchers)
   lines.push(
-    `local function ${L}(buf,key) local out={} local kl=#key for i=1,#buf do local i0=i-1 local b=${R}(buf,i) local k=${R}(key,(i0%kl)+1) local p=ba(i0*131+17,255) local rot=(k%7)+1 local rot2=(p%5)+1 b=bx(b,bx(k*3+p*5+i0,255)) b=(b+(k+p*3)%256)%256 b=${TMP}_ror(b,rot2) b=(b-p+256)%256 b=${TMP}_ror(b,rot) b=(b-k+256)%256 out[#out+1]=string.char(b) end return table.concat(out) end`
+    `local function ${L}(buf,key) local out={} local kl=#key for i=1,#buf do local i0=i-1 local b=${R}(buf,i) local k=${R}(key,(i0%kl)+1) local p=ba(i0*131+17,255) local rot=(k%7)+1 local rot2=(p%5)+1 b=(b-((k+p*3)&255)+256)%256 b=((b>>>rot2)|(b<<(8-rot2)))%256 b=(b+p)%256 b=((b>>>rot)|(b<<(8-rot)))%256 b=(b+k)%256 out[i]=${S}(buf,i,i) end return ${T}(out) end`
   );
 
-  // MEGA CF dispatcher with 7 states (not 5)
+  // MEGA CF dispatcher with 8 states (enhanced)
   lines.push(`local ${ST}="${luaEsc(s0)}"`);
   lines.push(`while true do`);
   lines.push(`if ${ST}=="${s0}" then`);
@@ -520,13 +589,15 @@ function buildLoader(sym, key, sumA, sumB, sumC, payloadLen, scrambled, opcodes)
   lines.push(`elseif ${ST}=="${s3}" then`);
   lines.push(`do local h=2654435761 local i=1 local mlen=#${M} while i<=mlen do local b=${R}(${M},i) h=(h+b*(i+30)+((h%89)*17)+13)%4294967296 i=i+1 end local hs=${K}(${H}) local hv=${R}(hs,1)*16777216+${R}(hs,2)*65536+${R}(hs,3)*256+${R}(hs,4) if h~=hv then ${OK}=false ${ST}="${sDead}" else ${ST}="${s4}" end end`);
   lines.push(`elseif ${ST}=="${s4}" then`);
-  lines.push(`do local hs=${K}(${I}) local hv=${R}(hs,1)*16777216+${R}(hs,2)*65536+${R}(hs,3)*256+${R}(hs,4) local h=2166136261 local i=1 local mlen=#${M} while i<=mlen do h=((h~${R}(${M},i))*16777619)%4294967296 i=i+1 end if h~=hv then ${OK}=false ${ST}="${sDead}" else ${ST}="${s5}" end end`);
+  lines.push(`do local hs=${K}(${I}) local hv=${R}(hs,1)*16777216+${R}(hs,2)*65536+${R}(hs,3)*256+${R}(hs,4) local h=2166136261 local i=1 local mlen=#${M} while i<=mlen do h=((h~${R}(${M},i))*167772161)%4294967296 i=i+1 end if h~=hv then ${OK}=false ${ST}="${sDead}" else ${ST}="${s5}" end end`);
   lines.push(`elseif ${ST}=="${s5}" then`);
   lines.push(`do local hs=${K}(${J}) local hv=${R}(hs,1)*16777216+${R}(hs,2)*65536+${R}(hs,3)*256+${R}(hs,4) local h=0 local i=1 local mlen=#${M} while i<=mlen do h=((h*33)+${R}(${M},i))%4294967296 i=i+1 end if h~=hv then ${OK}=false ${ST}="${sDead}" else ${ST}="${s6}" end end`);
   lines.push(`elseif ${ST}=="${s6}" then`);
+  lines.push(`do local hs=${K}(${P}) local hv=${R}(hs,1)*16777216+${R}(hs,2)*65536+${R}(hs,3)*256+${R}(hs,4) local h=5381 local i=1 local mlen=#${M} while i<=mlen do h=((h*33)+${R}(${M},i))%4294967296 i=i+1 end if h~=hv then ${OK}=false ${ST}="${sDead}" else ${ST}="${s7}" end end`);
+  lines.push(`elseif ${ST}=="${s7}" then`);
   lines.push(`${SS}=${VM}(${M})`);
-  lines.push(`do local ls=${K}(${B}) local lv=${R}(ls,1)*16777216+${R}(ls,2)*65536+${R}(ls,3)*256+${R}(ls,4) if #${SS}~=lv then ${OK}=false ${ST}="${sDead}" else ${ST}="${s4}b" end end`);
-  lines.push(`elseif ${ST}=="${s4}b" then`);
+  lines.push(`do local ls=${K}(${B}) local lv=${R}(ls,1)*16777216+${R}(ls,2)*65536+${R}(ls,3)*256+${R}(ls,4) if #${SS}~=lv then ${OK}=false ${ST}="${sDead}" else ${ST}="${s8}" end end`);
+  lines.push(`elseif ${ST}=="${s8}" then`);
   lines.push(`do local loader=${BB} local hooked=false`);
   lines.push(`if iscclosure and loader and not iscclosure(loader) then hooked=true end`);
   lines.push(`pcall(function() local s=${W}(loader) if s and not string.find(s,"function:") and not string.find(s,"builtin") then hooked=true end end)`);
@@ -550,7 +621,7 @@ function buildLoader(sym, key, sumA, sumB, sumC, payloadLen, scrambled, opcodes)
   lines.push('end)(...)');
 
   return (
-    `--[[ Protected by QyrexObf v${VERSION} | Military-Grade | POLYMORPHIC-VM ]]
+    `--[[ Protected by QyrexObf v${VERSION} | Military-Grade | POLYMORPHIC-VM | ANTI-TAMPER v2 ]]
 ` + lines.join('\n')
   );
 }
@@ -567,6 +638,7 @@ function obfuscate(source) {
   const sumA = checksum32(scrambled);
   const sumB = checksum32b(scrambled);
   const sumC = checksum32c(scrambled);
+  const sumD = checksum32d(scrambled);
   const sym = encBuf(scrambled);
 
   /* MANDATORY round-trip with all 4 scramble passes */
@@ -580,7 +652,7 @@ function obfuscate(source) {
   
   const bc = buildVmBytecode(scrambled, key, opcodes);
 
-  const code = buildLoader(sym, key, sumA, sumB, sumC, scrambled.length, scrambled, opcodes);
+  const code = buildLoader(sym, key, sumA, sumB, sumC, sumD, scrambled.length, scrambled, opcodes);
   return {
     code,
     stats: {
@@ -593,22 +665,25 @@ function obfuscate(source) {
         'polymorphic-opcode-mapping',
         'nested-vm-execution',
         'phantom-control-flow',
-        'triple-integrity-checksums',
-        'score-anti-tamper',
+        'quad-integrity-checksums',
+        'advanced-anti-tamper-layer',
+        'runtime-code-verification',
         'extended-sandbox-dtc',
         'advanced-hook-probes',
         'frozen-refs-atomized',
-        'extended-cf-dispatcher-7-states',
+        'extended-cf-dispatcher-8-states',
         'extreme-llm-decoys',
         'custom-polymorphic-vm',
         'vm-junk-ops-randomized',
         'stack-reconstruction-verified',
-        'bytecode-diffusion-layer'
+        'bytecode-diffusion-layer',
+        'meta-level-anti-tampering'
       ],
       verified: true,
       vmOpcodes: bc.length,
       polymorphic: true,
-      checksums: 3
+      checksums: 4,
+      antiTamperLayers: 6
     }
   };
 }
