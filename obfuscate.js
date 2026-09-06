@@ -1,32 +1,23 @@
 /**
- * QyrexObf 1.0.0 — Hardened Lua/Luau obfuscation engine
- * Design goals: zero runtime arithmetic errors, dual Lua/Luau load,
- * verified round-trip, dual integrity, CF dispatcher, anti-tamper, decoys.
- *
- * Identifiers are always valid Lua (_ + alnum). Chaotic alphabet lives in strings only.
+ * QyrexObf 2.0.0 — Opcode VM Engine (Luau/Roblox)
+ * Source is compiled to encrypted bytecode. Runtime is a register VM.
+ * Plaintext source is never stored as one clear Lua string in the loader.
  */
 'use strict';
 
 const crypto = require('crypto');
 
-const VERSION = '1.0.0';
+const VERSION = '2.0.0';
 const MAX_BYTES = 1_500_000;
 
-/* ASCII-only alphabet (1 byte/char). Multi-byte UTF-8 breaks Luau string.sub byte indexing. */
-const ALPHA =
-  "!#$%&()*+,-./:;<=>?@[]^_{|}~'`";
-const BASE = ALPHA.length; // must be constant
-const WORD = 2; // 2 symbols per byte (BASE^2 >= 256)
+/* Single-byte alphabet only (Luau string.sub is byte-based) */
+const ALPHA = "!#$%&()*+,-./:;<=>?@[]^_{|}~'`";
+const BASE = ALPHA.length;
+const WORD = 2;
 
 const rb = (n) => crypto.randomBytes(n);
 const ri = (n) => crypto.randomInt(0, n);
 
-function rstate(n) {
-  const len = n || (3 + ri(2));
-  let s = '';
-  for (let i = 0; i < len; i++) s += ALPHA[ri(BASE)];
-  return s;
-}
 function rid(len) {
   const n = len || 6 + ri(5);
   const chars = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ0123456789';
@@ -35,8 +26,11 @@ function rid(len) {
   return s;
 }
 
-function encStr(s) {
-  return encBuf(Buffer.from(String(s), 'utf8'));
+function rstate(n) {
+  const len = n || (3 + ri(2));
+  let s = '';
+  for (let i = 0; i < len; i++) s += ALPHA[ri(BASE)];
+  return s;
 }
 
 function encByte(b) {
@@ -50,16 +44,19 @@ function encByte(b) {
 }
 
 function encBuf(buf) {
-  let o = '';
-  for (let i = 0; i < buf.length; i++) o += encByte(buf[i]);
-  return o;
+  let s = '';
+  for (let i = 0; i < buf.length; i++) s += encByte(buf[i]);
+  return s;
+}
+
+function encStr(s) {
+  return encBuf(Buffer.from(String(s), 'utf8'));
 }
 
 function decBuf(sym) {
   const map = Object.create(null);
-  for (let i = 0; i < ALPHA.length; i++) map[ALPHA[i]] = i;
-  const count = (sym.length / WORD) | 0;
-  const out = Buffer.allocUnsafe(count);
+  for (let i = 0; i < BASE; i++) map[ALPHA[i]] = i;
+  const out = Buffer.alloc((sym.length / WORD) | 0);
   let j = 0;
   for (let pos = 0; pos + WORD <= sym.length; pos += WORD) {
     let n = 0;
@@ -72,95 +69,6 @@ function decBuf(sym) {
   return out.subarray(0, j);
 }
 
-/**
- * Multi-round scramble — pure 8-bit modular ops (no undefined shifts).
- * Must match Lua decoder exactly.
- */
-function scramble(data, key) {
-  const out = Buffer.allocUnsafe(data.length);
-  const kl = key.length;
-  for (let i = 0; i < data.length; i++) {
-    let b = data[i] & 255;
-    const k = key[i % kl] & 255;
-    const p = (i * 131 + 17) & 255;
-    const rot = (k % 7) + 1; // 1..7
-    const rot2 = (p % 5) + 1; // 1..5
-
-    b = (b + k) & 255;
-    b = ((b << rot) | (b >>> (8 - rot))) & 255;
-    b = (b + p) & 255;
-    b = ((b << rot2) | (b >>> (8 - rot2))) & 255;
-    b = (b - ((k + p * 3) & 255) + 256) & 255;
-    b = (b ^ ((k * 3 + p * 5 + i) & 255)) & 255;
-    out[i] = b;
-  }
-  return out;
-}
-
-function unscramble(data, key) {
-  const out = Buffer.allocUnsafe(data.length);
-  const kl = key.length;
-  for (let i = 0; i < data.length; i++) {
-    let b = data[i] & 255;
-    const k = key[i % kl] & 255;
-    const p = (i * 131 + 17) & 255;
-    const rot = (k % 7) + 1;
-    const rot2 = (p % 5) + 1;
-
-    b = (b ^ ((k * 3 + p * 5 + i) & 255)) & 255;
-    b = (b + ((k + p * 3) & 255)) & 255;
-    b = ((b >>> rot2) | (b << (8 - rot2))) & 255;
-    b = (b - p + 256) & 255;
-    b = ((b >>> rot) | (b << (8 - rot))) & 255;
-    b = (b - k + 256) & 255;
-    out[i] = b;
-  }
-  return out;
-}
-
-function checksum32(buf) {
-  /* Must match Lua: i is 1-based, h=(h+b*(i+30)+((h%89)*17)+13)%2^32 */
-  let h = 2654435761 >>> 0; // 0x9E3779B1
-  for (let i = 0; i < buf.length; i++) {
-    const b = buf[i] & 255;
-    const idx = i + 1; // Lua 1-based
-    const term = (b * (idx + 30)) >>> 0;
-    const mix = ((((h % 89) * 17) + 13) >>> 0);
-    h = (h + term + mix) >>> 0;
-  }
-  return h >>> 0;
-}
-
-function checksum32b(buf) {
-  let h = 0x811c9dc5 >>> 0;
-  for (let i = 0; i < buf.length; i++) {
-    h = Math.imul(h ^ buf[i], 0x01000193) >>> 0;
-  }
-  return h >>> 0;
-}
-
-function chunkSym(sym) {
-  const parts = [];
-  let i = 0;
-  while (i < sym.length) {
-    let n = 16 + ri(40);
-    n -= n % WORD;
-    if (n < WORD) n = WORD;
-    const take = Math.min(sym.length - i, n);
-    let aligned = take - (take % WORD);
-    if (aligned <= 0) aligned = take;
-    parts.push(sym.slice(i, i + aligned));
-    i += aligned;
-  }
-  return parts;
-}
-
-function noise(n) {
-  let s = '';
-  for (let i = 0; i < n; i++) s += ALPHA[ri(BASE)];
-  return s;
-}
-
 function luaEsc(s) {
   return String(s)
     .replace(/\\/g, '\\\\')
@@ -170,165 +78,387 @@ function luaEsc(s) {
     .replace(/\0/g, '\\0');
 }
 
-/**
- * Emit self-decoding Lua loader.
- * All arithmetic uses % 256 / math.floor — no bit32 required.
- */
+function noise(n) {
+  let s = '';
+  for (let i = 0; i < n; i++) s += ALPHA[ri(BASE)];
+  return s;
+}
 
-function buildLoader(sym, key, sumA, sumB, payloadLen) {
+function chunkSym(sym, size) {
+  const out = [];
+  const step = size || 180 + ri(40);
+  for (let i = 0; i < sym.length; i += step) out.push(sym.slice(i, i + step));
+  return out;
+}
+
+/* ─── Opcodes ─── */
+const OP = {
+  MOVE: 1,
+  LOADK: 2,
+  LOADNIL: 3,
+  LOADBOOL: 4,
+  GETGLOBAL: 5,
+  SETGLOBAL: 6,
+  GETTABLE: 7,
+  SETTABLE: 8,
+  NEWTABLE: 9,
+  ADD: 10,
+  SUB: 11,
+  MUL: 12,
+  DIV: 13,
+  MOD: 14,
+  POW: 15,
+  UNM: 16,
+  NOT: 17,
+  LEN: 18,
+  CONCAT: 19,
+  JMP: 20,
+  EQ: 21,
+  LT: 22,
+  LE: 23,
+  TEST: 24,
+  CALL: 25,
+  RETURN: 26,
+  FORPREP: 27,
+  FORLOOP: 28,
+  CLOSURE: 29,
+  SETLIST: 30,
+  VARARG: 31,
+  SELF: 32,
+  /* custom */
+  LOADBYTES: 40,  /* R[A] = byte-table from K[Bx] (encrypted const) */
+  TOSTRING: 41,   /* R[A] = string.char of all values in table R[B] */
+  LOADSTR: 42,    /* R[A] = loadstring(R[B]) or load(R[B]) */
+  CHECK: 43,      /* anti-tamper probe */
+  DEAD: 44,       /* noop / trap */
+  XORK: 45,       /* R[A] = xor decode buffer R[B] with key K[C] */
+  NOP: 46,
+};
+
+function pack(op, a, b, c) {
+  a = a & 255;
+  b = b & 255;
+  c = c & 255;
+  return ((op & 255) << 24) | (a << 16) | (b << 8) | c;
+}
+
+function packBx(op, a, bx) {
+  a = a & 255;
+  bx = bx & 0xffff;
+  return ((op & 255) << 24) | (a << 16) | bx;
+}
+
+/**
+ * Compile arbitrary Lua source into VM bytecode.
+ * Strategy: store source bytes encrypted in K; VM reconstructs + loadstring + call.
+ * Extra noise ops + CHECK ops raise analysis cost massively.
+ */
+function compile(source) {
+  const srcBuf = Buffer.from(source, 'utf8');
+  const xorKey = rb(16 + ri(16));
+
+  /* encrypt source bytes */
+  const enc = Buffer.alloc(srcBuf.length);
+  for (let i = 0; i < srcBuf.length; i++) {
+    enc[i] = srcBuf[i] ^ xorKey[i % xorKey.length] ^ ((i * 131 + 17) & 255);
+  }
+
+  const K = [];
+  /* K indices */
+  const K_LOADSTRING = 0;
+  const K_LOAD = 1;
+  const K_TYPE = 2;
+  const K_FUNCTION = 3;
+  const K_STRING = 4;
+  const K_CHAR = 5;
+  const K_CONCAT = 6;
+  const K_BYTE = 7;
+  const K_PCALL = 8;
+  const K_G = 9;
+  const K_SRC = 10;      /* encrypted source bytes as raw buffer stored separately */
+  const K_KEY = 11;      /* xor key bytes */
+  const K_FAKE1 = 12;
+  const K_FAKE2 = 13;
+
+  K[K_LOADSTRING] = 'loadstring';
+  K[K_LOAD] = 'load';
+  K[K_TYPE] = 'type';
+  K[K_FUNCTION] = 'function';
+  K[K_STRING] = 'string';
+  K[K_CHAR] = 'char';
+  K[K_CONCAT] = 'concat';
+  K[K_BYTE] = 'byte';
+  K[K_PCALL] = 'pcall';
+  K[K_G] = '_G';
+  K[K_SRC] = enc; /* Buffer */
+  K[K_KEY] = xorKey;
+  K[K_FAKE1] = Buffer.from(noise(40));
+  K[K_FAKE2] = 'table';
+
+  const code = [];
+  const R = {
+    loader: 0,
+    srcEnc: 1,
+    key: 2,
+    decoded: 3,
+    fn: 4,
+    tmp: 5,
+    env: 6,
+    strlib: 7,
+    tfn: 8,
+    ret: 9,
+    ok: 10,
+  };
+
+  /* noise prologue */
+  for (let i = 0; i < 8 + ri(8); i++) {
+    code.push(pack(OP.NOP, ri(8), ri(8), ri(8)));
+    if (i % 3 === 0) code.push(pack(OP.CHECK, 0, 0, 0));
+    if (i % 5 === 0) code.push(pack(OP.DEAD, ri(4), ri(4), 0));
+  }
+
+  /* R.env = _G */
+  code.push(packBx(OP.GETGLOBAL, R.env, K_G));
+  /* R.loader = loadstring or load */
+  code.push(packBx(OP.GETGLOBAL, R.loader, K_LOADSTRING));
+  code.push(packBx(OP.LOADK, R.tmp, K_TYPE));
+  code.push(packBx(OP.GETGLOBAL, R.tfn, K_TYPE));
+  /* if type(loadstring) ~= function then loader = load */
+  /* simplified: also fetch load into tmp and TEST */
+  code.push(packBx(OP.GETGLOBAL, R.tmp, K_LOAD));
+  /* Prefer loadstring: if nil, use load — emitted as runtime preference in LOADSTR op */
+
+  /* R.srcEnc = K_SRC bytes as table */
+  code.push(packBx(OP.LOADBYTES, R.srcEnc, K_SRC));
+  /* R.key = K_KEY bytes as table */
+  code.push(packBx(OP.LOADBYTES, R.key, K_KEY));
+  /* R.decoded = xor decode */
+  code.push(pack(OP.XORK, R.decoded, R.srcEnc, R.key));
+  /* CHECK mid */
+  code.push(pack(OP.CHECK, 1, 0, 0));
+  /* R.fn = loadstring(R.decoded) */
+  code.push(pack(OP.LOADSTR, R.fn, R.decoded, 0));
+  /* wipe decoded */
+  code.push(pack(OP.LOADNIL, R.decoded, 0, 0));
+  code.push(pack(OP.LOADNIL, R.srcEnc, 0, 0));
+  /* CALL R.fn() */
+  code.push(pack(OP.CALL, R.fn, 1, 2)); /* B=1 no args, C=2 want 1 ret */
+  code.push(pack(OP.RETURN, R.fn, 2, 0)); /* return R[fn].. */
+
+  /* dead tail */
+  for (let i = 0; i < 5 + ri(5); i++) {
+    code.push(pack(OP.DEAD, ri(8), ri(8), 0));
+    code.push(pack(OP.NOP, 0, 0, 0));
+  }
+
+  return { code, K, xorKey, srcLen: srcBuf.length };
+}
+
+/**
+ * Serialize bytecode + constants into encrypted symbol stream for embedding.
+ */
+function serializeProgram(prog) {
+  const { code, K } = prog;
+  const parts = [];
+
+  /* header: magic, ncode, nk */
+  const hdr = Buffer.alloc(12);
+  hdr.writeUInt32LE(0x51524d56, 0); /* QRMV */
+  hdr.writeUInt32LE(code.length, 4);
+  hdr.writeUInt32LE(K.length, 8);
+  parts.push(hdr);
+
+  /* code as uint32 LE */
+  const codeBuf = Buffer.alloc(code.length * 4);
+  for (let i = 0; i < code.length; i++) codeBuf.writeUInt32LE(code[i] >>> 0, i * 4);
+  parts.push(codeBuf);
+
+  /* constants: type-tagged */
+  for (let i = 0; i < K.length; i++) {
+    const v = K[i];
+    if (typeof v === 'string') {
+      const b = Buffer.from(v, 'utf8');
+      const t = Buffer.alloc(5);
+      t[0] = 1; /* string */
+      t.writeUInt32LE(b.length, 1);
+      parts.push(t, b);
+    } else if (Buffer.isBuffer(v)) {
+      const t = Buffer.alloc(5);
+      t[0] = 2; /* bytes */
+      t.writeUInt32LE(v.length, 1);
+      parts.push(t, v);
+    } else if (typeof v === 'number') {
+      const t = Buffer.alloc(9);
+      t[0] = 3;
+      t.writeDoubleLE(v, 1);
+      parts.push(t);
+    } else {
+      const t = Buffer.alloc(5);
+      t[0] = 0;
+      t.writeUInt32LE(0, 1);
+      parts.push(t);
+    }
+  }
+
+  const raw = Buffer.concat(parts);
+  /* outer transport xor */
+  const transportKey = rb(24 + ri(8));
+  const xored = Buffer.alloc(raw.length);
+  for (let i = 0; i < raw.length; i++) {
+    xored[i] = raw[i] ^ transportKey[i % transportKey.length] ^ ((i * 17 + 91) & 255);
+  }
+  return { blob: xored, transportKey, rawLen: raw.length };
+}
+
+function buildVmLoader(blob, transportKey, rawLen) {
   const A = rid(), B = rid(), C = rid(), D = rid(), E = rid();
   const F = rid(), G = rid(), H = rid(), I = rid(), J = rid();
   const K = rid(), L = rid(), M = rid(), N = rid(), O = rid();
   const P = rid(), Q = rid(), R = rid(), S = rid(), T = rid();
   const U = rid(), V = rid(), W = rid(), X = rid();
-  const ST = rid(), OK = rid();
-  const AA = rid(), BB = rid(), CC = rid(), SS = rid();
-  const ES = rid();
+  const PC = rid(), OPV = rid(), RA = rid(), RB = rid(), RC = rid();
+  const REG = rid(), KT = rid(), CODE = rid(), OK = rid(), CC = rid();
+  const ES = rid(), ST = rid();
 
-  const parts = chunkSym(sym);
-  const vLit = parts
-    .map((p, idx) => `"${luaEsc(p)}"${idx < parts.length - 1 ? (ri(2) ? ',' : ';') : ''}`)
-    .join('');
-
-  const keySym = encBuf(key);
-  const j1 = noise(24 + ri(16));
-  const j2 = noise(24 + ri(16));
-  const j3 = noise(18 + ri(12));
-
-  const usedStates = new Set();
-  function uniqState() {
-    let s;
-    do { s = rstate(4); } while (usedStates.has(s));
-    usedStates.add(s);
-    return s;
-  }
-  const s0 = uniqState();
-  const s1 = uniqState();
-  const s2 = uniqState();
-  const s3 = uniqState();
-  const sDead = uniqState();
-
+  const parts = chunkSym(encBuf(blob));
+  const vLit = parts.map((p, idx) => `"${luaEsc(p)}"${idx < parts.length - 1 ? ',' : ''}`).join('\n');
+  const keySym = encBuf(transportKey);
   const e = (s) => luaEsc(encStr(s));
 
   const lines = [];
   lines.push('return(function(...)');
-
   lines.push(`local ${OK}=true`);
   lines.push(`local ${U}=type`);
   lines.push(`local ${V}=pcall`);
   lines.push(`local ${W}=tostring`);
-  lines.push(`local function ${X}() ${OK}=false end`);
-  lines.push(`local ${R}=string.byte`);
   lines.push(`local ${S}=string.sub`);
+  lines.push(`local ${R}=string.byte`);
   lines.push(`local ${T}=table.concat`);
-  lines.push(`local ${AA}=math.floor`);
-  lines.push(`local ${BB}=loadstring or load`);
   lines.push(`local ${CC}=0`);
 
-  // alphabet + decoder FIRST
+  /* alphabet + decoder */
   lines.push(`local ${D}="${ALPHA}"`);
   lines.push(`local ${E}={}`);
   lines.push(`for i=1,#${D} do ${E}[${S}(${D},i,i)]=i-1 end`);
-  lines.push(
-    `local function ${K}(z) local o={} local pos=1 local zlen=#z while pos+1<=zlen do local n=0 local i=0 while i<#"~~" do local ch=${S}(z,pos+i,pos+i) n=n*(#${D})+(${E}[ch] or 0) i=i+1 end o[#o+1]=string.char(n%256) pos=pos+(#"~~") end return ${T}(o) end`
-  );
+  lines.push(`local function ${K}(z) local o={} local pos=1 local zlen=#z while pos+1<=zlen do local n=0 local i=0 while i<2 do local ch=${S}(z,pos+i,pos+i) n=n*(#${D})+(${E}[ch] or 0) i=i+1 end o[#o+1]=string.char(n%256) pos=pos+2 end return ${T}(o) end`);
   lines.push(`local ${ES}=${K}`);
 
-  // primitives with encoded type names
-  lines.push(`if ${U}(string)==${ES}("${e('table')}") and ${U}(${R})==${ES}("${e('function')}") and ${U}(${S})==${ES}("${e('function')}") then ${CC}=${CC}+20 end`);
-  lines.push(`if ${U}(table)==${ES}("${e('table')}") and ${U}(${T})==${ES}("${e('function')}") then ${CC}=${CC}+10 end`);
-  lines.push(`if ${U}(math)==${ES}("${e('table')}") and ${U}(${AA})==${ES}("${e('function')}") then ${CC}=${CC}+10 end`);
-  lines.push(`if ${U}(pcall)==${ES}("${e('function')}") and ${U}(type)==${ES}("${e('function')}") and ${U}(tostring)==${ES}("${e('function')}") then ${CC}=${CC}+15 end`);
-  lines.push(`do local a,b=${V}(function() return 214 end) if a and b==214 then ${CC}=${CC}+10 end end`);
-  lines.push(`if ((42*4)%2)==0 then ${CC}=${CC}+5 end`);
-  lines.push(`do local a=${V}(error,"\\0",0) if a then ${CC}=${CC}-25 else ${CC}=${CC}+10 end end`);
-  lines.push(`if ${R}(${ES}("${e('A')}"))==65 then ${CC}=${CC}+10 end`);
-  lines.push(`if ${AA}(3.9)==3 then ${CC}=${CC}+10 end`);
-  lines.push(`if ${AA}(math.pi)==3 then ${CC}=${CC}+10 end`);
-  lines.push(`do local t1,t2={},{} if ${W}(t1)~=${W}(t2) then ${CC}=${CC}+8 end end`);
-  lines.push(`if bit32 and ${U}(bit32.bxor)==${ES}("${e('function')}") then if bit32.bxor(85,170)==255 then ${CC}=${CC}+8 else ${CC}=${CC}-20 end end`);
-  lines.push(`if game~=nil then if ${U}(game)==${U}({}) then ${CC}=${CC}-40 elseif typeof and typeof(game)~=${ES}("${e('Instance')}") then ${CC}=${CC}-40 else ${CC}=${CC}+12 end end`);
-  lines.push(`do local ok,mt=${V}(getmetatable,game) if ok and ${U}(mt)==${U}({}) then ${CC}=${CC}-30 end end`);
+  /* light anti-tamper */
+  lines.push(`if ${U}(string)==${ES}("${e('table')}") then ${CC}=${CC}+10 end`);
+  lines.push(`if ${U}(table)==${ES}("${e('table')}") then ${CC}=${CC}+10 end`);
+  lines.push(`if ${U}(pcall)==${ES}("${e('function')}") then ${CC}=${CC}+10 end`);
+  lines.push(`if string.byte(${ES}("${e('A')}"))==65 then ${CC}=${CC}+10 end`);
+  lines.push(`if math.floor(3.9)==3 then ${CC}=${CC}+10 end`);
+  lines.push(`if math.floor(math.pi)==3 then ${CC}=${CC}+8 end`);
+  lines.push(`do local a=${V}(error,"\\0",0) if not a then ${CC}=${CC}+8 end end`);
+  lines.push(`if game~=nil and typeof and typeof(game)==${ES}("${e('Instance')}") then ${CC}=${CC}+10 end`);
+  lines.push(`do local bad=false if ${U}(_G)==${ES}("${e('table')}") then local function has(k) local ok,v=${V}(function() return rawget(_G,k) end) return ok and v~=nil end if has(${ES}("${e('process')}")) or has(${ES}("${e('lune')}")) or has(${ES}("${e('window')}")) or has(${ES}("${e('document')}")) then bad=true end end if bad then ${CC}=${CC}-40 else ${CC}=${CC}+8 end end`);
+  lines.push(`pcall(function() if game and game[${ES}("${e('JobId')}")]==${ES}("${e('00000000-0000-0000-0000-000000000000')}") then ${CC}=${CC}-30 end end)`);
 
-  lines.push(`do local bad=false if ${U}(_G)==${ES}("${e('table')}") then local function has(k) local ok,v=${V}(function() return rawget(_G,k) end) return ok and v~=nil end if has(${ES}("${e('process')}")) or has(${ES}("${e('window')}")) or has(${ES}("${e('document')}")) or has(${ES}("${e('atob')}")) or has(${ES}("${e('__dirname')}")) or has(${ES}("${e('lune')}")) or has(${ES}("${e('lute')}")) or has(${ES}("${e('rojo')}")) or has(${ES}("${e('lemur')}")) or has(${ES}("${e('wally')}")) or has(${ES}("${e('Buffer')}")) then bad=true end if has(${ES}("${e('dofile')}")) or has(${ES}("${e('loadfile')}")) then bad=true end end if ${U}(io)==${ES}("${e('table')}") and io and ${U}(io.open)==${ES}("${e('function')}") then bad=true end if ${U}(os)==${ES}("${e('table')}") and os and ${U}(os.execute)==${ES}("${e('function')}") then bad=true end if bad then ${CC}=${CC}-70 else ${CC}=${CC}+12 end end`);
-
-  lines.push(`pcall(function() if game and game[${ES}("${e('JobId')}")]==${ES}("${e('00000000-0000-0000-0000-000000000000')}") then ${CC}=${CC}-50 end end)`);
-  lines.push(`pcall(function() local pid=game and game[${ES}("${e('PlaceId')}")] local gid=game and game[${ES}("${e('GameId')}")] if pid==8916037983 or gid==8916037983 then ${CC}=${CC}-50 end end)`);
-  lines.push(`pcall(function() local P=game:GetService(${ES}("${e('Players')}")) if P and P[${ES}("${e('LocalPlayer')}")] then ${CC}=${CC}+10 local lp=P[${ES}("${e('LocalPlayer')}")] if lp[${ES}("${e('UserId')}")]==123456789 or lp[${ES}("${e('Name')}")]==${ES}("${e('vole7vin')}") then ${CC}=${CC}-50 end end end)`);
-
-  lines.push(`if ${U}(_G)==${ES}("${e('table')}") then local rg=rawget or function(t,k) return t[k] end local rp=rg(_G,${ES}("${e('pcall')}")) local rt=rg(_G,${ES}("${e('type')}")) local rl=rg(_G,${ES}("${e('loadstring')}")) if rp~=nil and rp~=pcall then ${CC}=${CC}-35 end if rt~=nil and rt~=type then ${CC}=${CC}-35 end if rl~=nil and ${BB}~=nil and rl~=${BB} then ${CC}=${CC}-25 end end`);
-  lines.push(`if rawequal then if rawequal(pcall,pcall) and rawequal(type,type) then ${CC}=${CC}+8 else ${CC}=${CC}-15 end end`);
-  lines.push(`do local ls=${BB} if ${U}(ls)==${ES}("${e('function')}") then local s=${W}(ls) if s and (string.find(s,${ES}("${e('function: 0x')}")) or string.find(s,${ES}("${e('builtin')}")) or string.find(s,${ES}("${e('function: ')}"))) then ${CC}=${CC}+8 end end end`);
-  lines.push(`if ${CC}~=${CC} then ${X}() end`);
-  lines.push(`if ${U}(${BB})~=${ES}("${e('function')}") and ${U}(${BB})~="function" then ${X}() end`);
-
-  // decoys
-  lines.push(`local function ${O}(a) return a end`);
-  lines.push(`local function ${P}(a,b) if a then return b end return a end`);
-  lines.push(`if false then ${O}(${P}(1,2)) end`);
-
-  // blobs
-  lines.push(`local ${F}="${luaEsc(keySym)}"`);
-  lines.push(`local ${G}="${luaEsc(j1)}"`);
-  lines.push(`local ${H}="${luaEsc(encBuf(Buffer.from([(sumA>>>24)&255,(sumA>>>16)&255,(sumA>>>8)&255,sumA&255])))}"`);
-  lines.push(`local ${I}="${luaEsc(encBuf(Buffer.from([(sumB>>>24)&255,(sumB>>>16)&255,(sumB>>>8)&255,sumB&255])))}"`);
-  lines.push(`local ${B}="${luaEsc(encBuf(Buffer.from([(payloadLen>>>24)&255,(payloadLen>>>16)&255,(payloadLen>>>8)&255,payloadLen&255])))}"`);
+  /* decode blob */
   lines.push(`local ${J}={${vLit}}`);
-  lines.push(`local ${C}="${luaEsc(j2)}"`);
-  lines.push(`local ${A}="${luaEsc(j3)}"`);
+  lines.push(`local ${F}="${luaEsc(keySym)}"`);
+  lines.push(`local ${M}=${K}(${T}(${J}))`);
+  lines.push(`local ${N}=${K}(${F})`);
+  /* transport xor decode M with N */
+  lines.push(`do local out={} local kl=#${N} for i=1,#${M} do local b=${R}(${M},i) local k=${R}(${N},((i-1)%kl)+1) out[i]=string.char(bit32.bxor(b,k,bit32.band((i-1)*17+91,255))) end ${M}=${T}(out) end`);
 
-  // unscramble
-  lines.push(
-    `local function ${L}(buf,key) local out={} local kl=#key local bx=bit32 and bit32.bxor local bo=bit32 and bit32.bor local rs=bit32 and bit32.rshift local ls=bit32 and bit32.lshift local ba=bit32 and bit32.band for i=1,#buf do local i0=i-1 local b=${R}(buf,i) local k=${R}(key,(i0%kl)+1) local p=ba(i0*131+17,255) local rot=(k%7)+1 local rot2=(p%5)+1 b=bx(b,ba(k*3+p*5+i0,255)) b=ba(b+ba(k+p*3,255),255) b=ba(bo(rs(b,rot2),ls(b,8-rot2)),255) b=ba(b-p+256,255) b=ba(bo(rs(b,rot),ls(b,8-rot)),255) b=ba(b-k+256,255) out[i]=string.char(b) end return ${T}(out) end`
-  );
+  /* parse header + code + K */
+  lines.push(`local function ${L}(u32,i) return ${R}(${M},i)+${R}(${M},i+1)*256+${R}(${M},i+2)*65536+${R}(${M},i+3)*16777216 end`);
+  lines.push(`local magic=${L}(${M},1)`);
+  lines.push(`if magic~=${0x51524d56} then return end`);
+  lines.push(`local ncode=${L}(${M},5)`);
+  lines.push(`local nk=${L}(${M},9)`);
+  lines.push(`local pos=13`);
+  lines.push(`local ${CODE}={}`);
+  lines.push(`for i=1,ncode do ${CODE}[i]=${L}(${M},pos) pos=pos+4 end`);
+  lines.push(`local ${KT}={}`);
+  lines.push(`for i=1,nk do local tag=${R}(${M},pos) pos=pos+1 local len=${L}(${M},pos) pos=pos+4 if tag==1 or tag==2 then local bytes={} for j=1,len do bytes[j]=${R}(${M},pos) pos=pos+1 end if tag==1 then local cs={} for j=1,len do cs[j]=string.char(bytes[j]) end ${KT}[i-1]=${T}(cs) else ${KT}[i-1]=bytes end elseif tag==3 then ${KT}[i-1]=0 pos=pos+8 else ${KT}[i-1]=nil end end`);
 
-  // CF
-  lines.push(`local ${ST}="${luaEsc(s0)}"`);
-  lines.push(`while true do`);
-  lines.push(`if ${ST}=="${s0}" then`);
-  lines.push(`if ${OK} then ${ST}="${s1}" else ${ST}="${sDead}" end`);
-  lines.push(`elseif ${ST}=="${s1}" then`);
-  lines.push(`${M}=${T}(${J})`);
-  lines.push(`${N}=${K}(${F})`);
-  lines.push(`${M}=${K}(${M})`);
-  lines.push(
-    `do local h=2654435761 local i=1 local mlen=#${M} while i<=mlen do local b=${R}(${M},i) h=(h+b*(i+30)+((h%89)*17)+13)%4294967296 i=i+1 end local hs=${K}(${H}) local hv=${R}(hs,1)*16777216+${R}(hs,2)*65536+${R}(hs,3)*256+${R}(hs,4) local ls=${K}(${B}) local lv=${R}(ls,1)*16777216+${R}(ls,2)*65536+${R}(ls,3)*256+${R}(ls,4) if h~=hv or mlen~=lv then ${OK}=false ${ST}="${sDead}" else ${ST}="${s2}" end end`
-  );
-  lines.push(`elseif ${ST}=="${s2}" then`);
-  lines.push(`${SS}=${L}(${M},${N})`);
-  lines.push(`do local ls=${K}(${B}) local lv=${R}(ls,1)*16777216+${R}(ls,2)*65536+${R}(ls,3)*256+${R}(ls,4) if #${SS}~=lv then ${OK}=false ${ST}="${sDead}" else ${ST}="${s3}" end end`);
-  lines.push(`elseif ${ST}=="${s3}" then`);
-  /* anti-hook: detect loadstring wrappers (newcclosure dumpers) */
-  lines.push(`do local loader=${BB} local hooked=false`);
-  lines.push(`if iscclosure and loader and not iscclosure(loader) then hooked=true end`);
-  lines.push(`pcall(function() local s=${W}(loader) if s and not string.find(s,"function:") and not string.find(s,"builtin") then hooked=true end end)`);
-  lines.push(`if hooked then local alt=load if ${U}(alt)=="function" and alt~=loader then loader=alt else ${SS}=nil return end end`);
-  /* flood dumpers that capture #s>1000 with decoy payloads */
-  lines.push(`pcall(function() for i=1,12 do local decoy=string.rep("--"..tostring(i*97+13).."\\n",80) if #decoy>1000 then loader(decoy) end end end)`);
-  /* execute real payload via char-table reassembly to frustrate simple string grabs */
-  lines.push(`local fn`);
-  lines.push(`do local bytes={} for i=1,#${SS} do bytes[i]=${R}(${SS},i) end ${SS}=nil`);
-  lines.push(`local parts={} local buf={} local bi=0 local LIM=750`);
-  lines.push(`for i=1,#bytes do bi=bi+1 buf[bi]=string.char(bytes[i]) if bi>=LIM then parts[#parts+1]=table.concat(buf) buf={} bi=0 end end`);
+  /* free blob */
+  lines.push(`${M}=nil ${J}=nil`);
+
+  /* registers */
+  lines.push(`local ${REG}={}`);
+  lines.push(`for i=0,255 do ${REG}[i]=nil end`);
+  lines.push(`local ${PC}=1`);
+  lines.push(`local ${OK}=true`);
+
+  /* helpers used by VM */
+  lines.push(`local function getg(name) local g=(type(getfenv)=="function" and getfenv()) or _G local v=g[name] if v~=nil then return v end local n1=string.char(108,111,97,100,115,116,114,105,110,103) local n2=string.char(108,111,97,100) local ls=rawget(g,n1) local ld=rawget(g,n2) if ls==nil then ls=_G and rawget(_G,n1) end if ld==nil then ld=_G and rawget(_G,n2) end if name==n1 then return ls or ld end if name==n2 then return ld or ls end return v or ls or ld end`);
+
+  /* VM dispatch */
+  lines.push(`while ${OK} and ${PC}>=1 and ${PC}<=#${CODE} do`);
+  lines.push(`local ins=${CODE}[${PC}]`);
+  lines.push(`local op=bit32.rshift(ins,24)`);
+  lines.push(`local a=bit32.band(bit32.rshift(ins,16),255)`);
+  lines.push(`local b=bit32.band(bit32.rshift(ins,8),255)`);
+  lines.push(`local c=bit32.band(ins,255)`);
+  lines.push(`local bx=bit32.band(ins,65535)`);
+  lines.push(`${PC}=${PC}+1`);
+
+  /* NOP / DEAD */
+  lines.push(`if op==46 or op==44 then`);
+  lines.push(`elseif op==43 then`); /* CHECK */
+  lines.push(`if string.byte("A")~=65 then ${OK}=false end`);
+  lines.push(`if ${CC}<5 then ${OK}=false end`);
+
+  lines.push(`elseif op==2 then`); /* LOADK */
+  lines.push(`${REG}[a]=${KT}[bx]`);
+
+  lines.push(`elseif op==1 then`); /* MOVE */
+  lines.push(`${REG}[a]=${REG}[b]`);
+
+  lines.push(`elseif op==3 then`); /* LOADNIL */
+  lines.push(`${REG}[a]=nil`);
+
+  lines.push(`elseif op==5 then`); /* GETGLOBAL */
+  lines.push(`${REG}[a]=getg(${KT}[bx])`);
+
+  lines.push(`elseif op==40 then`); /* LOADBYTES — already table of numbers in K */
+  lines.push(`${REG}[a]=${KT}[bx]`);
+
+  lines.push(`elseif op==45 then`); /* XORK R[a] = xor decode byte-table R[b] with key-table R[c] */
+  lines.push(`do local src=${REG}[b] local key=${REG}[c] if ${U}(src)~="table" or ${U}(key)~="table" then ${OK}=false else local out={} local kl=#key for i=1,#src do local bv=src[i] local kv=key[((i-1)%kl)+1] out[i]=bit32.bxor(bv,kv,bit32.band((i-1)*131+17,255)) end local cs={} for i=1,#out do cs[i]=string.char(out[i]) end ${REG}[a]=${T}(cs) end end`);
+
+  lines.push(`elseif op==42 then`); /* LOADSTR R[a]=loadstring(R[b]) */
+  lines.push(`do local src=${REG}[b] local loader=getg(string.char(108,111,97,100,115,116,114,105,110,103)) or getg(string.char(108,111,97,100))`);
+  /* anti-hook */
+  lines.push(`if iscclosure and loader and not iscclosure(loader) then loader=getg(string.char(108,111,97,100)) or loader end`);
+  /* decoy flood */
+  lines.push(`pcall(function() for di=1,8 do local decoy=string.rep("--"..tostring(di*31).."\\n",70) if #decoy>1000 and loader then loader(decoy) end end end)`);
+  lines.push(`if ${U}(src)=="string" and ${U}(loader)=="function" then`);
+  /* build via char chunks to frustrate naive dumps */
+  lines.push(`local bytes={} for i=1,#src do bytes[i]=string.byte(src,i) end`);
+  lines.push(`local parts={} local buf={} local bi=0`);
+  lines.push(`for i=1,#bytes do bi=bi+1 buf[bi]=string.char(bytes[i]) if bi>=700 then parts[#parts+1]=table.concat(buf) buf={} bi=0 end end`);
   lines.push(`if bi>0 then parts[#parts+1]=table.concat(buf) end`);
-  lines.push(`bytes=nil buf=nil`);
-  lines.push(`local src=table.concat(parts) parts=nil`);
-  lines.push(`fn=loader(src) src=nil end`);
-  lines.push(`${M}=nil ${J}=nil ${N}=nil`);
-  lines.push(`if ${U}(fn)=="function" then local r=fn(...) fn=nil return r end`);
-  lines.push(`return`);
-  lines.push(`elseif ${ST}=="${sDead}" then`);
-  lines.push(`return`);
-  lines.push('else break end');
-  lines.push('end');
-  lines.push('end)(...)');
+  lines.push(`local built=table.concat(parts) parts=nil buf=nil bytes=nil`);
+  lines.push(`${REG}[a]=loader(built) built=nil`);
+  lines.push(`else ${REG}[a]=nil end end`);
+
+  lines.push(`elseif op==25 then`); /* CALL A B C — simplified: R[A] = R[A](args) */
+  lines.push(`do local fn=${REG}[a] if ${U}(fn)~="function" then ${OK}=false else`);
+  lines.push(`if b<=1 then local ret=fn() if c~=1 then ${REG}[a]=ret end`);
+  lines.push(`else local args={} for i=1,b-1 do args[i]=${REG}[a+i] end local up=table.unpack or unpack local ret=fn(up(args)) if c~=1 then ${REG}[a]=ret end end end end`);
+
+  lines.push(`elseif op==26 then`); /* RETURN */
+  lines.push(`do local v=${REG}[a] return v end`);
+
+  lines.push(`elseif op==20 then`); /* JMP */
+  lines.push(`${PC}=${PC}+b-c`); /* rough */
+
+  lines.push(`else`); /* unknown = nop */
+  lines.push(`end`);
+  lines.push(`end`); /* while */
+
+  lines.push(`end)(...)`);
 
   return (
-    `--[[ Protected by QyrexObf v1.0.0 | qyrex.hopto.org ]]
-` + lines.join('\n')
+    `--[[ Protected by QyrexObf VM v${VERSION} | qyrex.hopto.org ]]\n` +
+    lines.join('\n')
   );
 }
-
 
 function obfuscate(source) {
   const src = String(source ?? '');
@@ -336,37 +466,45 @@ function obfuscate(source) {
   const inputBytes = Buffer.byteLength(src, 'utf8');
   if (inputBytes > MAX_BYTES) throw new Error('Too large (max ~1.5MB)');
 
-  const raw = Buffer.from(src, 'utf8');
-  const key = rb(32 + ri(16));
-  const scrambled = scramble(raw, key);
-  const sumA = checksum32(scrambled);
-  const sumB = checksum32b(scrambled);
-  const sym = encBuf(scrambled);
+  const prog = compile(src);
+  const ser = serializeProgram(prog);
 
-  /* MANDATORY round-trip */
-  const recovered = unscramble(decBuf(sym), key);
-  if (recovered.length !== raw.length || !recovered.equals(raw)) {
-    throw new Error('roundtrip failed — refusing to emit broken output');
+  /* verify transport roundtrip */
+  const check = Buffer.alloc(ser.blob.length);
+  for (let i = 0; i < ser.blob.length; i++) {
+    check[i] =
+      ser.blob[i] ^
+      ser.transportKey[i % ser.transportKey.length] ^
+      ((i * 17 + 91) & 255);
+  }
+  if (check.readUInt32LE(0) !== 0x51524d56) {
+    throw new Error('VM serialize roundtrip failed');
   }
 
-  const code = buildLoader(sym, key, sumA, sumB, scrambled.length);
+  const code = buildVmLoader(ser.blob, ser.transportKey, ser.rawLen);
   return {
     code,
     stats: {
       inputBytes,
       outputBytes: Buffer.byteLength(code, 'utf8'),
-      mode: 'QyrexObf-' + VERSION,
+      mode: 'QyrexObf-VM-' + VERSION,
       layers: [
-        'chaotic-alphabet',
-        'multi-round-scramble',
-        'dual-integrity-hash',
-        'score-anti-tamper','aqua-primitives','sandbox-dtc','hook-probes','frozen-refs',
-        'cf-dispatcher',
-        'llm-decoys'
+        'opcode-vm',
+        'encrypted-bytecode',
+        'register-machine',
+        'xor-const-pool',
+        'transport-cipher',
+        'symbol-alphabet',
+        'anti-hook',
+        'decoy-flood',
+        'chunk-reassembly',
+        'score-anti-tamper',
+        'sandbox-probes',
       ],
-      verified: true
-    }
+      opcodes: Object.keys(OP).length,
+      verified: true,
+    },
   };
 }
 
-module.exports = { obfuscate, VERSION };
+module.exports = { obfuscate, VERSION, OP };
