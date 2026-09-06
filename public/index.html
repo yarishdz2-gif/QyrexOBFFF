@@ -1,154 +1,43 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>QyrexObf 2.0</title>
+<title>QyrexObf 1.0.0</title>
 <style>
-:root{
-  --bg:#07070c;--panel:#0e0e16;--line:#222233;--fg:#ececf5;--dim:#6e6e86;
-  --hi:#a78bfa;--ok:#4ade80;--err:#fb7185;--r:16px;
-  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  --disp:Inter,system-ui,sans-serif;
-}
-*{box-sizing:border-box}
-body{
-  margin:0;min-height:100vh;background:var(--bg);color:var(--fg);
-  font:14px/1.45 var(--disp);
-  background-image:
-    radial-gradient(ellipse 80% 50% at 20% -10%,rgba(167,139,250,.18),transparent),
-    radial-gradient(ellipse 60% 40% at 100% 0%,rgba(56,189,248,.08),transparent);
-}
-.shell{max-width:1180px;margin:0 auto;padding:28px 18px 48px}
-.top{display:flex;flex-wrap:wrap;justify-content:space-between;gap:16px;margin-bottom:20px}
-.brand h1{margin:0;font-size:22px;letter-spacing:-.02em}
-.brand p{margin:6px 0 0;color:var(--dim);font-size:13px;max-width:520px}
-.pills{display:flex;flex-wrap:wrap;gap:8px;align-content:flex-start}
-.pill{
-  font-family:var(--mono);font-size:11px;padding:6px 10px;border-radius:999px;
-  border:1px solid var(--line);background:#12121c;color:var(--dim)
-}
-.pill.hi{border-color:rgba(167,139,250,.45);color:var(--hi);background:rgba(167,139,250,.08)}
-.actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px}
-button{
-  font-family:var(--disp);font-weight:700;font-size:13px;border-radius:12px;
-  padding:11px 16px;cursor:pointer;border:1px solid transparent
-}
-button:disabled{opacity:.45;cursor:not-allowed}
-.bp{background:linear-gradient(135deg,#c4b5fd,#818cf8);color:#0b0b12}
-.bp:hover{filter:brightness(1.06)}
-.bg{background:transparent;color:var(--fg);border:1px solid var(--line)}
-.bg:hover{background:rgba(255,255,255,.04)}
-.meta{font-family:var(--mono);font-size:12px;color:var(--dim);margin-left:auto}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-@media(max-width:920px){.grid{grid-template-columns:1fr}.meta{margin-left:0;width:100%}}
-.card{
-  background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
-  overflow:hidden;display:flex;flex-direction:column;min-height:460px;
-  box-shadow:0 20px 60px rgba(0,0,0,.35)
-}
-.ch{
-  display:flex;align-items:center;justify-content:space-between;
-  padding:12px 14px;border-bottom:1px solid var(--line);
-  font-size:12px;color:var(--dim);font-family:var(--mono)
-}
-.ch b{color:var(--fg);font-family:var(--disp);font-size:13px}
-textarea{
-  flex:1;width:100%;border:0;outline:0;resize:none;padding:14px 16px;
-  background:transparent;color:var(--fg);font-family:var(--mono);font-size:12.5px;line-height:1.55
-}
-#out{color:#d4d4f0}
-.foot{
-  margin-top:22px;padding-top:16px;border-top:1px solid var(--line);
-  display:flex;flex-wrap:wrap;gap:12px 24px;justify-content:space-between;
-  color:var(--dim);font-size:12px;font-family:var(--mono)
-}
-.toast{
-  position:fixed;bottom:22px;right:22px;background:#17171f;border:1px solid var(--line);
-  color:var(--fg);padding:12px 16px;border-radius:12px;font-size:13px;
-  opacity:0;pointer-events:none;transition:.25s;z-index:50;font-family:var(--mono)
-}
-.toast.show{opacity:1}
-.toast.ok{border-color:rgba(74,222,128,.35);color:var(--ok)}
-.toast.err{border-color:rgba(251,113,133,.35);color:var(--err)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:ui-monospace,monospace;background:#0a0a0f;color:#e4e4e7;min-height:100vh;padding:24px}
+h1{color:#a78bfa;margin-bottom:8px;font-size:1.4rem}
+.sub{color:#71717a;margin-bottom:20px;font-size:.85rem}
+textarea{width:100%;min-height:180px;background:#12121a;border:1px solid #27272a;border-radius:10px;color:#e4e4e7;padding:14px;font-size:13px;resize:vertical}
+button{margin-top:12px;background:#7c3aed;color:#fff;border:0;border-radius:8px;padding:10px 18px;font-weight:700;cursor:pointer}
+button:hover{background:#6d28d9}
+pre{margin-top:16px;background:#12121a;border:1px solid #27272a;border-radius:10px;padding:14px;white-space:pre-wrap;word-break:break-all;font-size:12px;max-height:420px;overflow:auto}
+.stats{color:#a1a1aa;font-size:12px;margin-top:8px}
 </style>
 </head>
 <body>
-<div class="shell">
-  <div class="top">
-    <div class="brand">
-      <h1>QyrexObf <span style="color:var(--hi)">2.0.0</span></h1>
-      <p>Lua/Luau · alfabeto simbólico · scramble multi-ronda · anti-tamper · CF dispatcher · decoys · dual hash</p>
-    </div>
-    <div class="pills">
-      <span class="pill hi">MAX PROTECT</span>
-      <span class="pill">anti-tamper</span>
-      <span class="pill">integrity ×2</span>
-      <span class="pill">CF flatten</span>
-      <span class="pill">LLM traps</span>
-    </div>
-  </div>
-
-  <div class="actions">
-    <button class="bp" id="runBtn" onclick="runObf()">Blindar y Ofuscar</button>
-    <button class="bg" onclick="copyOut()">Copiar</button>
-    <button class="bg" onclick="dlOut()">Descargar .lua</button>
-    <button class="bg" onclick="clearAll()">Limpiar</button>
-    <div class="meta" id="stats">listo</div>
-  </div>
-
-  <div class="grid">
-    <div class="card">
-      <div class="ch"><b>Source</b><span>Lua / Luau</span></div>
-      <textarea id="src" spellcheck="false" placeholder="-- pega tu script
-print(&quot;hola&quot;)"></textarea>
-    </div>
-    <div class="card">
-      <div class="ch"><b>Protected output</b><span>QyrexObf 2.0</span></div>
-      <textarea id="out" spellcheck="false" readonly placeholder="output ofuscado..."></textarea>
-    </div>
-  </div>
-
-  <div class="foot">
-    <span>POST /api/obfuscate · {"source":"..."}</span>
-    <span>QyrexObf 2.0.0 · military stack</span>
-  </div>
-</div>
-<div class="toast" id="toast"></div>
+<h1>QyrexObf 1.0.0</h1>
+<p class="sub">qyrex.hopto.org — symbol payload · anti-tamper · single-line</p>
+<textarea id="in" placeholder="print(&quot;EXECUTED_OK&quot;)"></textarea>
+<br/>
+<button id="go">Obfuscate</button>
+<button id="copy" style="background:#3f3f46">Copy</button>
+<div class="stats" id="stats"></div>
+<pre id="out"></pre>
 <script>
-const $=id=>document.getElementById(id);
-function toast(msg,kind){
-  const t=$('toast'); t.textContent=msg; t.className='toast show '+(kind||'');
-  clearTimeout(t._x); t._x=setTimeout(()=>t.className='toast',2200);
-}
-function clearAll(){ $('src').value=''; $('out').value=''; $('stats').textContent='listo'; }
-async function runObf(){
-  const source=$('src').value;
-  if(!source.trim()){ toast('source vacío','err'); return; }
-  const btn=$('runBtn'); btn.disabled=true; $('stats').textContent='procesando...';
+const inEl=document.getElementById('in'), out=document.getElementById('out'), stats=document.getElementById('stats');
+document.getElementById('go').onclick=async()=>{
+  stats.textContent='...';
   try{
-    const r=await fetch('/api/obfuscate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source})});
+    const r=await fetch('/api/obfuscate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:inEl.value})});
     const j=await r.json();
-    if(!r.ok) throw new Error(j.error||'error');
-    $('out').value=j.code;
-    const s=j.stats||{};
-    $('stats').textContent=`${s.inputBytes||0} → ${s.outputBytes||0} B · ${s.mode||'QyrexObf'}`;
-    toast('blindado','ok');
-  }catch(e){ toast(e.message||'error','err'); $('stats').textContent='error'; }
-  finally{ btn.disabled=false; }
-}
-async function copyOut(){
-  const v=$('out').value; if(!v){ toast('nada que copiar','err'); return; }
-  try{ await navigator.clipboard.writeText(v); toast('copiado','ok'); }
-  catch{ toast('no se pudo copiar','err'); }
-}
-function dlOut(){
-  const v=$('out').value; if(!v){ toast('nada que descargar','err'); return; }
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(new Blob([v],{type:'text/plain'}));
-  a.download='qyrexobf_2.0.lua'; a.click(); URL.revokeObjectURL(a.href);
-  toast('descarga','ok');
-}
+    if(!j.ok) throw new Error(j.error||'fail');
+    out.textContent=j.code;
+    stats.textContent=JSON.stringify(j.stats);
+  }catch(e){stats.textContent=String(e);out.textContent='';}
+};
+document.getElementById('copy').onclick=()=>navigator.clipboard.writeText(out.textContent||'');
 </script>
 </body>
 </html>
