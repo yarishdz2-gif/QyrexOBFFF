@@ -1,53 +1,26 @@
 'use strict';
-
 const express = require('express');
-const path = require('path');
 const cors = require('cors');
-const helmet = require('helmet');
-const { obfuscate, VERSION } = require('./obfuscate');
+const path = require('path');
+const { obfuscate } = require('./obfuscate');
 
 const app = express();
-const PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT || 3000;
 
-app.disable('x-powered-by');
-app.use(
-  helmet({
-    contentSecurityPolicy: false,
-    crossOriginEmbedderPolicy: false
-  })
-);
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
-app.use(
-  express.static(path.join(__dirname, 'public'), {
-    maxAge: '1h',
-    etag: true
-  })
-);
-
-app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'QyrexObf', version: VERSION });
-});
+app.use(express.static(path.join(__dirname, 'public')));
 
 app.post('/api/obfuscate', (req, res) => {
   try {
-    const body = req.body || {};
-    const source = body.source ?? body.code ?? '';
-    if (!String(source).trim()) {
-      return res.status(400).json({ error: 'Empty source' });
-    }
-    const result = obfuscate(source);
-    res.json(result);
+    const code = (req.body && req.body.code) || '';
+    const result = obfuscate(code);
+    res.json({ ok: true, code: result.code, stats: result.stats });
   } catch (e) {
-    console.error('[QyrexObf]', e.message);
-    res.status(400).json({ error: e.message || 'obfuscation failed' });
+    res.status(400).json({ ok: false, error: String(e && e.message ? e.message : e) });
   }
 });
 
-app.get('*', (_req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
+app.get('/health', (_, res) => res.json({ ok: true, version: '1.0.0' }));
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`QyrexObf ${VERSION} listening on 0.0.0.0:${PORT}`);
-});
+app.listen(PORT, () => console.log('QyrexObf 1.0.0 on ' + PORT));

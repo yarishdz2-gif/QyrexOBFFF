@@ -1,18 +1,17 @@
 {
   "name": "qyrexobf",
-  "version": "2.0.0",
-  "description": "QyrexObf VM — hardened Lua/Luau obfuscation server (zero-error loader)",
+  "version": "1.0.0",
+  "description": "QyrexObf 1.0.0 — Luau obfuscator",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "build": "echo ok"
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "cors": "^2.8.5",
+    "body-parser": "^1.20.2"
   },
   "engines": {
     "node": ">=18"
-  },
-  "dependencies": {
-    "express": "^4.21.2",
-    "cors": "^2.8.5",
-    "helmet": "^7.1.0"
   }
 }
