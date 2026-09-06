@@ -1,9 +1,9 @@
 /**
- * QyrexObf 1.0.0 — max practical resistance under loadstring constraint
- *
- * Truth: any final loadstring(fullSource) can be dumped by Nova/45ms hooks.
- * This build maximizes cost: multi-chunk XOR, decoy floods, API charcodes,
- * soft anti-tamper, hook probes, never one contiguous plaintext literal.
+ * QyrexObf 1.0.0
+ * - Symbol-only payload
+ * - APIs resolved via string.char codes (no "string.byte" literals)
+ * - Soft anti-tamper fused from user suites (never kills clean Roblox)
+ * - Must execute
  */
 'use strict';
 const crypto = require('crypto');
@@ -30,6 +30,9 @@ function encBuf(buf) {
   for (let i = 0; i < buf.length; i++) s += encByte(buf[i]);
   return s;
 }
+function encStr(s) {
+  return encBuf(Buffer.from(String(s), 'utf8'));
+}
 function decBuf(sym) {
   const map = Object.create(null);
   for (let i = 0; i < BASE; i++) map[ALPHA[i]] = i;
@@ -50,6 +53,12 @@ function luaEsc(s) {
     .replace(/\n/g, '\\n')
     .replace(/\0/g, '\\0');
 }
+function chunkSym(sym) {
+  const out = [];
+  const step = 90 + ri(50);
+  for (let i = 0; i < sym.length; i += step) out.push(sym.slice(i, i + step));
+  return out;
+}
 function scramble(data, key) {
   const out = Buffer.allocUnsafe(data.length);
   const kl = key.length;
@@ -61,87 +70,95 @@ function scramble(data, key) {
 function unscramble(data, key) {
   return scramble(data, key);
 }
-function ch(s) {
-  return 'string.char(' + [...Buffer.from(s, 'utf8')].join(',') + ')';
-}
-function chunkSym(sym) {
-  const out = [];
-  const step = 70 + ri(40);
-  for (let i = 0; i < sym.length; i += step) out.push(sym.slice(i, i + step));
-  return out;
+
+/** emit string.char(n1,n2,...) for a JS string */
+function charCodes(s) {
+  const bytes = Buffer.from(s, 'utf8');
+  return 'string.char(' + [...bytes].join(',') + ')';
 }
 
-function buildLoader(sym, key, nChunks) {
+function buildLoader(sym, key) {
   const id = () => rid();
-  const V = {};
-  for (let i = 0; i < 50; i++) V[i] = id();
+  const v = {};
+  for (let i = 0; i < 40; i++) v['x' + i] = id();
 
   const parts = chunkSym(sym);
   const vLit = parts.map((p) => `"${luaEsc(p)}"`).join(',');
   const keySym = encBuf(key);
+  const e = (s) => luaEsc(encStr(s));
+
+  // Resolve libraries without "string.byte" etc. as contiguous readable names in assignment
+  // Use: local lib = _G[string.char(...)]
+  const S_STRING = charCodes('string');
+  const S_TABLE = charCodes('table');
+  const S_BYTE = charCodes('byte');
+  const S_SUB = charCodes('sub');
+  const S_CONCAT = charCodes('concat');
+  const S_CHAR = charCodes('char');
+  const S_TYPE = charCodes('type');
+  const S_PCALL = charCodes('pcall');
+  const S_TOSTRING = charCodes('tostring');
+  const S_RAWGET = charCodes('rawget');
+  const S_LOADSTRING = charCodes('loadstring');
+  const S_LOAD = charCodes('load');
 
   const L = [];
   L.push('return(function(...)');
-  L.push(`local ${V[0]}=_G`);
-  L.push(`local ${V[1]}=${V[0]}[${ch('type')}]or type`);
-  L.push(`local ${V[2]}=${V[0]}[${ch('pcall')}]or pcall`);
-  L.push(`local ${V[3]}=${V[0]}[${ch('string')}]or string`);
-  L.push(`local ${V[4]}=${V[0]}[${ch('table')}]or table`);
-  L.push(`local ${V[5]}=${V[3]}[${ch('byte')}]`);
-  L.push(`local ${V[6]}=${V[3]}[${ch('sub')}]`);
-  L.push(`local ${V[7]}=${V[4]}[${ch('concat')}]`);
-  L.push(`local ${V[8]}=${V[3]}[${ch('char')}]`);
-  L.push(`local ${V[9]}=${V[0]}[${ch('rawget')}]or rawget`);
-  L.push(`local ${V[10]}=0`);
 
-  /* soft anti-tamper / sandbox (never hard-kill clean client) */
-  L.push(`if ${V[1]}(${V[3]})==${V[8]}(116,97,98,108,101)then ${V[10]}=${V[10]}+10 end`);
-  L.push(`if ${V[5]}(${V[8]}(65))==65 then ${V[10]}=${V[10]}+10 end`);
-  L.push(`if math and math.floor(3.9)==3 and math.floor(math.pi)==3 then ${V[10]}=${V[10]}+10 end`);
-  L.push(`do local a=${V[2]}(error,"\\0",0)if not a then ${V[10]}=${V[10]}+8 end end`);
-  L.push(`if game~=nil and typeof and typeof(game)==${V[8]}(73,110,115,116,97,110,99,101)then ${V[10]}=${V[10]}+10 end`);
-  L.push(`do local bad=false if ${V[1]}(${V[0]})==${V[8]}(116,97,98,108,101)then local function has(k)local ok,val=${V[2]}(function()return ${V[9]}(${V[0]},k)end)return ok and val~=nil end`);
-  const sand = ['process','window','document','lune','lute','rojo','lemur','Buffer','navigator','__dirname','dofile','loadfile','atob'];
-  for (const name of sand) {
-    L.push(`if has(${ch(name)})then bad=true end`);
-  }
-  L.push(`end if bad then ${V[10]}=${V[10]}-50 else ${V[10]}=${V[10]}+8 end end`);
-  L.push(`pcall(function()if game and game[${ch('JobId')}]==${ch('00000000-0000-0000-0000-000000000000')}then ${V[10]}=${V[10]}-35 end end)`);
-  L.push(`pcall(function()if game and(game[${ch('PlaceId')}]==8916037983 or game[${ch('GameId')}]==8916037983)then ${V[10]}=${V[10]}-35 end end)`);
-  L.push(`if rawequal and rawequal(pcall,pcall)then ${V[10]}=${V[10]}+6 end`);
+  /* bootstrap resolve */
+  L.push(`local ${v.x0}=_G`);
+  L.push(`local ${v.x1}=${v.x0}[${S_TYPE}] or type`);
+  L.push(`local ${v.x2}=${v.x0}[${S_PCALL}] or pcall`);
+  L.push(`local ${v.x3}=${v.x0}[${S_STRING}] or string`);
+  L.push(`local ${v.x4}=${v.x0}[${S_TABLE}] or table`);
+  L.push(`local ${v.x5}=${v.x3}[${S_BYTE}]`);
+  L.push(`local ${v.x6}=${v.x3}[${S_SUB}]`);
+  L.push(`local ${v.x7}=${v.x4}[${S_CONCAT}]`);
+  L.push(`local ${v.x8}=${v.x3}[${S_CHAR}]`);
+  L.push(`local ${v.x9}=${v.x0}[${S_RAWGET}] or rawget`);
+  L.push(`local ${v.x10}=0`);
 
-  /* alphabet + decode */
-  L.push(`local ${V[11]}="${ALPHA}"`);
-  L.push(`local ${V[12]}={}`);
-  L.push(`for ${V[13]}=1,#${V[11]} do ${V[12]}[${V[6]}(${V[11]},${V[13]},${V[13]})]=${V[13]}-1 end`);
-  L.push(`local function ${V[14]}(${V[15]})local ${V[16]}={}local ${V[17]}=1 local ${V[18]}=#${V[15]} while ${V[17]}+1<=${V[18]} do local ${V[19]}=0 local ${V[20]}=0 while ${V[20]}<2 do local ${V[21]}=${V[6]}(${V[15]},${V[17]}+${V[20]},${V[17]}+${V[20]}) ${V[19]}=${V[19]}*(#${V[11]})+(${V[12]}[${V[21]}] or 0) ${V[20]}=${V[20]}+1 end ${V[16]}[#${V[16]}+1]=${V[8]}(${V[19]}%256) ${V[17]}=${V[17]}+2 end return ${V[7]}(${V[16]}) end`);
-  L.push(`local function ${V[22]}(${V[23]},${V[24]}) ${V[23]}=${V[23]}%256 ${V[24]}=${V[24]}%256 local ${V[25]}=0 local ${V[26]}=1 for ${V[27]}=1,8 do local ${V[28]}=${V[23]}%2 local ${V[29]}=${V[24]}%2 if ${V[28]}~=${V[29]} then ${V[25]}=${V[25]}+${V[26]} end ${V[23]}=(${V[23]}-${V[28]})/2 ${V[24]}=(${V[24]}-${V[29]})/2 ${V[26]}=${V[26]}*2 end return ${V[25]} end`);
+  /* soft anti-tamper (message-9 / message-8 / BESTAT style, score only) */
+  L.push(`if ${v.x1}(${v.x3})==${v.x8}(116,97,98,108,101) then ${v.x10}=${v.x10}+10 end`);
+  L.push(`if ${v.x1}(${v.x5})==${v.x8}(102,117,110,99,116,105,111,110) then ${v.x10}=${v.x10}+10 end`);
+  L.push(`if ${v.x5}(${v.x8}(65))==65 then ${v.x10}=${v.x10}+10 end`);
+  L.push(`if math and math.floor(3.9)==3 then ${v.x10}=${v.x10}+8 end`);
+  L.push(`do local a=${v.x2}(error,"\\0",0) if not a then ${v.x10}=${v.x10}+8 end end`);
+  L.push(`if game~=nil and typeof and typeof(game)==${v.x8}(73,110,115,116,97,110,99,101) then ${v.x10}=${v.x10}+10 end`);
+  /* sandbox leaks */
+  L.push(`do local bad=false if ${v.x1}(${v.x0})==${v.x8}(116,97,98,108,101) then local function has(k) local ok,val=${v.x2}(function() return ${v.x9}(${v.x0},k) end) return ok and val~=nil end if has(${v.x8}(112,114,111,99,101,115,115)) or has(${v.x8}(119,105,110,100,111,119)) or has(${v.x8}(100,111,99,117,109,101,110,116)) or has(${v.x8}(108,117,110,101)) or has(${v.x8}(108,117,116,101)) or has(${v.x8}(114,111,106,111)) then bad=true end end if bad then ${v.x10}=${v.x10}-40 else ${v.x10}=${v.x10}+8 end end`);
+  /* JobId zero sandbox */
+  L.push(`pcall(function() if game and game[${v.x8}(74,111,98,73,100)]==${v.x8}(48,48,48,48,48,48,48,48,45,48,48,48,48,45,48,48,48,48,45,48,48,48,48,45,48,48,48,48,48,48,48,48,48,48,48,48) then ${v.x10}=${v.x10}-30 end end)`);
+  /* getfenv identity soft */
+  L.push(`pcall(function() if getfenv then local ok,env=${v.x2}(getfenv,0) if ok and env and ${v.x1}(env)==${v.x8}(116,97,98,108,101) then if env.getfenv~=nil and env.getfenv~=getfenv then ${v.x10}=${v.x10}-20 end end end end)`);
+  /* rawequal pcall */
+  L.push(`if rawequal and rawequal(pcall,pcall) then ${v.x10}=${v.x10}+6 end`);
+  /* never abort on score */
 
-  L.push(`local ${V[30]}={${vLit}}`);
-  L.push(`local ${V[31]}="${luaEsc(keySym)}"`);
-  L.push(`local ${V[32]}=${V[14]}(${V[7]}(${V[30]}))`);
-  L.push(`local ${V[33]}=${V[14]}(${V[31]})`);
-  L.push(`local ${V[34]}={} local ${V[35]}=#${V[33]}`);
-  L.push(`for ${V[36]}=1,#${V[32]} do local ${V[37]}=${V[5]}(${V[32]},${V[36]}) local ${V[38]}=${V[5]}(${V[33]},((${V[36]}-1)%${V[35]})+1) local ${V[39]}=((${V[36]}-1)*31+17)%256 ${V[34]}[${V[36]}]=${V[8]}(${V[22]}(${V[22]}(${V[37]},${V[38]}),${V[39]})%256) end`);
+  /* alphabet decoder */
+  L.push(`local ${v.x11}="${ALPHA}"`);
+  L.push(`local ${v.x12}={}`);
+  L.push(`for ${v.x13}=1,#${v.x11} do ${v.x12}[${v.x6}(${v.x11},${v.x13},${v.x13})]=${v.x13}-1 end`);
+  L.push(`local function ${v.x14}(${v.x15}) local ${v.x16}={} local ${v.x17}=1 local ${v.x18}=#${v.x15} while ${v.x17}+1<=${v.x18} do local ${v.x19}=0 local ${v.x20}=0 while ${v.x20}<2 do local ${v.x21}=${v.x6}(${v.x15},${v.x17}+${v.x20},${v.x17}+${v.x20}) ${v.x19}=${v.x19}*(#${v.x11})+(${v.x12}[${v.x21}] or 0) ${v.x20}=${v.x20}+1 end ${v.x16}[#${v.x16}+1]=${v.x8}(${v.x19}%256) ${v.x17}=${v.x17}+2 end return ${v.x7}(${v.x16}) end`);
 
-  /* multi-chunk string so dumper sees fragments not one literal */
-  L.push(`local ${V[40]}={} local ${V[41]}=1 local ${V[42]}=#${V[34]} local ${V[43]}=math.max(1,math.floor(${V[42]}/${Math.max(3, nChunks)}))`);
-  L.push(`while ${V[41]}<=${V[42]} do local ${V[44]}=math.min(${V[41]}+${V[43]}-1,${V[42]}) local ${V[45]}={} for ${V[46]}=${V[41]},${V[44]} do ${V[45]}[#${V[45]}+1]=${V[34]}[${V[46]}] end ${V[40]}[#${V[40]}+1]=${V[7]}(${V[45]}) ${V[41]}=${V[44]}+1 end`);
-  L.push(`${V[32]}=nil ${V[34]}=nil ${V[33]}=nil`);
+  /* pure XOR */
+  L.push(`local function ${v.x22}(${v.x23},${v.x24}) ${v.x23}=${v.x23}%256 ${v.x24}=${v.x24}%256 local ${v.x25}=0 local ${v.x26}=1 for ${v.x27}=1,8 do local ${v.x28}=${v.x23}%2 local ${v.x29}=${v.x24}%2 if ${v.x28}~=${v.x29} then ${v.x25}=${v.x25}+${v.x26} end ${v.x23}=(${v.x23}-${v.x28})/2 ${v.x24}=(${v.x24}-${v.x29})/2 ${v.x26}=${v.x26}*2 end return ${v.x25} end`);
 
-  /* resolve loader */
-  L.push(`local ${V[47]}=${V[9]}(${V[0]},${ch('loadstring')}) or ${V[9]}(${V[0]},${ch('load')})`);
-  L.push(`if ${V[1]}(${V[47]})~=${V[8]}(102,117,110,99,116,105,111,110) then return end`);
-  /* anti-hook soft */
-  L.push(`pcall(function() if iscclosure and not iscclosure(${V[47]}) then ${V[10]}=${V[10]}-15 end end)`);
+  L.push(`local ${v.x30}={${vLit}}`);
+  L.push(`local ${v.x31}="${luaEsc(keySym)}"`);
+  L.push(`local ${v.x32}=${v.x14}(${v.x7}(${v.x30}))`);
+  L.push(`local ${v.x33}=${v.x14}(${v.x31})`);
+  L.push(`local ${v.x34}={} local ${v.x35}=#${v.x33}`);
+  L.push(`for ${v.x36}=1,#${v.x32} do local ${v.x37}=${v.x5}(${v.x32},${v.x36}) local ${v.x38}=${v.x5}(${v.x33},((${v.x36}-1)%${v.x35})+1) local ${v.x39}=((${v.x36}-1)*31+17)%256 ${v.x34}[${v.x36}]=${v.x8}(${v.x22}(${v.x22}(${v.x37},${v.x38}),${v.x39})%256) end`);
+  L.push(`local ${v.x30}=${v.x7}(${v.x34})`);
+  L.push(`${v.x32}=nil ${v.x34}=nil ${v.x33}=nil`);
 
-  /* DECOY flood — pollute dumper with fake loadstrings first */
-  L.push(`pcall(function() for ${V[48]}=1,12 do local ${V[49]}=${V[8]}(45,45,32)+tostring(${V[48]}*97) local d=string.rep(${V[49]}.."\\n",60) ${V[47]}(d) end end)`);
-
-  /* assemble + execute — only moment of full source */
-  L.push(`local ${V[32]}=${V[7]}(${V[40]}) ${V[40]}=nil`);
-  L.push(`local ${V[33]}=${V[47]}(${V[32]}) ${V[32]}=nil`);
-  L.push(`if ${V[1]}(${V[33]})==${V[8]}(102,117,110,99,116,105,111,110) then local ${V[34]},${V[35]}=${V[2]}(${V[33]},...) if ${V[34]} then return ${V[35]} end end`);
+  /* loader without literal loadstring if possible */
+  L.push(`local ${v.x31}=${v.x9}(${v.x0},${S_LOADSTRING}) or ${v.x9}(${v.x0},${S_LOAD}) `);
+  L.push(`if ${v.x1}(${v.x31})~=${v.x8}(102,117,110,99,116,105,111,110) then return end`);
+  L.push(`local ${v.x32}=${v.x31}(${v.x30})`);
+  L.push(`${v.x30}=nil`);
+  L.push(`if ${v.x1}(${v.x32})==${v.x8}(102,117,110,99,116,105,111,110) then local ${v.x33},${v.x34}=${v.x2}(${v.x32},...) if ${v.x33} then return ${v.x34} end end`);
   L.push(`end)(...)`);
 
   return `--[[ Protected by QyrexObf v${VERSION} | qyrex.hopto.org ]]\n` + L.join(' ');
@@ -152,28 +169,23 @@ function obfuscate(source) {
   if (!src.trim()) throw new Error('Empty code');
   const raw = Buffer.from(src, 'utf8');
   if (raw.length > 1500000) throw new Error('Too large');
-  const key = rb(40 + ri(24));
+  const key = rb(32 + ri(16));
   const scrambled = scramble(raw, key);
   const sym = encBuf(scrambled);
   if (!unscramble(decBuf(sym), key).equals(raw)) throw new Error('roundtrip failed');
-  const nChunks = Math.min(24, Math.max(4, Math.ceil(raw.length / 40)));
-  const code = buildLoader(sym, key, nChunks);
+  const code = buildLoader(sym, key);
   return {
     code,
     stats: {
       inputBytes: raw.length,
       outputBytes: Buffer.byteLength(code, 'utf8'),
       mode: 'QyrexObf-' + VERSION,
-      chunks: nChunks,
       layers: [
         'symbol-alphabet',
-        'xor-stream',
-        'api-charcodes',
-        'multi-chunk-reassembly',
-        'decoy-loadstring-flood',
+        'xor',
+        'api-via-charcodes',
         'soft-anti-tamper',
         'sandbox-probes',
-        'hook-probe',
         'digit-ids',
         'single-line',
       ],
