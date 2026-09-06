@@ -1,0 +1,34 @@
+<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>QyrexObf VM 1.0.0</title>
+<style>
+:root{--bg:#06060c;--p:#0d0d16;--b:#1e1e2e;--t:#e8e8f0;--m:#7a7a94;--a:#8b5cf6;--c:#22d3ee}
+*{box-sizing:border-box;margin:0;padding:0}
+body{min-height:100vh;font-family:ui-monospace,monospace;background:radial-gradient(900px 500px at 10% -10%,rgba(139,92,246,.14),transparent 55%),var(--bg);color:var(--t);padding:28px 16px}
+.wrap{max-width:920px;margin:0 auto}
+h1{font-size:1.6rem;background:linear-gradient(90deg,var(--a),var(--c));-webkit-background-clip:text;background-clip:text;color:transparent}
+.sub{color:var(--m);font-size:.8rem;margin:6px 0 16px}
+.card{background:var(--p);border:1px solid var(--b);border-radius:14px;padding:14px;margin-bottom:12px}
+label{display:block;font-size:.7rem;color:var(--m);letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px}
+textarea{width:100%;min-height:170px;background:#08080f;color:var(--t);border:1px solid var(--b);border-radius:10px;padding:12px;font:13px/1.45 ui-monospace,monospace;resize:vertical}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+button{border:0;cursor:pointer;font-family:inherit;font-weight:700;padding:10px 14px;border-radius:9px}
+.main{background:linear-gradient(135deg,var(--a),#6d28d9);color:#fff}
+.ghost{background:rgba(255,255,255,.05);color:var(--t);border:1px solid var(--b)}
+.stats{margin-top:8px;font-size:.72rem;color:var(--m)}
+.badge{float:right;font-size:.7rem;color:var(--c);border:1px solid var(--b);padding:5px 10px;border-radius:999px}
+</style></head><body>
+<div class="wrap"><span class="badge">VM v1.0.0</span>
+<h1>QYREXOBF VM</h1><p class="sub">qyrex.hopto.org · true bytecode VM · no source loadstring</p>
+<div class="card"><label>Input Lua / Luau</label>
+<textarea id="in" placeholder='print("xd")'></textarea>
+<div class="row"><button class="main" id="go">Obfuscate</button>
+<button class="ghost" id="ex">Example</button><button class="ghost" id="copy">Copy</button></div>
+<div class="stats" id="stats"></div></div>
+<div class="card"><label>Output (VM bytecode)</label>
+<textarea id="out" readonly style="min-height:160px"></textarea></div></div>
+<script>
+const $=id=>document.getElementById(id);
+$('ex').onclick=()=>$('in').value='print("xd")';
+$('go').onclick=async()=>{try{const r=await fetch('/api/obfuscate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:$('in').value})});const j=await r.json();if(!j.ok)throw new Error(j.error||'fail');$('out').value=j.code;$('stats').textContent=JSON.stringify(j.stats);}catch(e){$('stats').textContent=String(e)}};
+$('copy').onclick=()=>navigator.clipboard.writeText($('out').value||'');
+</script></body></html>
