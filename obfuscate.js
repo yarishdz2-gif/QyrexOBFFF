@@ -660,6 +660,150 @@ function compile(src) {
       }
       return;
     }
+
+    if (match('for')) {
+      const names = [];
+      names.push(expect('id').v);
+      while (match(',')) names.push(expect('id').v);
+
+      if (match('=')) {
+        if (names.length !== 1) throw new Error('numeric for expects 1 name');
+        const name = names[0];
+        const e1 = expr(proto);
+        expect(',');
+        const e2 = expr(proto);
+        let e3 = null;
+        if (match(',')) e3 = expr(proto);
+        expect('do');
+
+        const rIdx = newReg(proto);
+        const rLimit = newReg(proto);
+        const rStep = newReg(proto);
+        const rVar = proto.localCount++;
+        proto.locals.set(name, rVar);
+        if (rVar > proto.maxR) proto.maxR = rVar;
+
+        emit(proto, OP.MOVE, rIdx, e1, 0);
+        emit(proto, OP.MOVE, rLimit, e2, 0);
+        if (e3 != null) emit(proto, OP.MOVE, rStep, e3, 0);
+        else emit(proto, OP.LOADK, rStep, intern(1), 0);
+        emit(proto, OP.SUB, rIdx, rIdx, rStep);
+
+        const loopStart = Math.floor(proto.code.length / 4);
+        emit(proto, OP.ADD, rIdx, rIdx, rStep);
+
+        // exit when (step>0 and idx>limit) or (step<=0 and idx<limit)
+        const r0 = newReg(proto);
+        emit(proto, OP.LOADK, r0, intern(0), 0);
+        const rStepPos = newReg(proto);
+        emit(proto, OP.LT, rStepPos, r0, rStep); // step > 0
+        const rGT = newReg(proto);
+        emit(proto, OP.LT, rGT, rLimit, rIdx); // idx > limit
+        const rLT = newReg(proto);
+        emit(proto, OP.LT, rLT, rIdx, rLimit); // idx < limit
+        const rExit = newReg(proto);
+        const rAlt = newReg(proto);
+        // rExit = rStepPos and rGT
+        emit(proto, OP.MOVE, rExit, rStepPos, 0);
+        emit(proto, OP.TEST, rExit, 1, 0);
+        emit(proto, OP.MOVE, rExit, rGT, 0);
+        // rAlt = not rStepPos and rLT
+        emit(proto, OP.NOT, rAlt, rStepPos, 0);
+        emit(proto, OP.TEST, rAlt, 1, 0);
+        emit(proto, OP.MOVE, rAlt, rLT, 0);
+        // rExit = rExit or rAlt
+        emit(proto, OP.TEST, rExit, 0, 0);
+        emit(proto, OP.MOVE, rExit, rAlt, 0);
+
+        const jmpOut = proto.code.length;
+        emit(proto, OP.TEST, rExit, 0, 0); // if exit is falsy, skip JMP
+        emit(proto, OP.JMP, 0, 0, 0);
+
+        emit(proto, OP.MOVE, rVar, rIdx, 0);
+        const snap = scopeEnter(proto);
+        blockUntil(proto, ['end']);
+        scopeExit(proto, snap);
+        expect('end');
+        emit(proto, OP.JMP, loopStart, 0, 0);
+        const outPC = Math.floor(proto.code.length / 4);
+        proto.code[jmpOut + 5] = outPC;
+        return;
+      }
+
+      if (match('in')) {
+        // for n1[,n2,...] in pairs(t)|ipairs(t)|next,t[,k] do
+        // Special-case pairs(x) and ipairs(x)
+        let mode = null; // 'pairs' | 'ipairs' | 'raw'
+        let tableReg = null;
+
+        if (peek().t === 'id' && (peek().v === 'pairs' || peek().v === 'ipairs') && tokens[p+1] && tokens[p+1].t === '(') {
+          mode = next().v;
+          expect('(');
+          tableReg = expr(proto);
+          expect(')');
+        } else {
+          // fallback: in explist — treat first as table for next-based if single?
+          tableReg = expr(proto);
+          mode = 'pairs';
+        }
+        // skip extra ,exp
+        while (match(',')) expr(proto);
+        expect('do');
+
+        const rTable = newReg(proto);
+        emit(proto, OP.MOVE, rTable, tableReg, 0);
+        const rKey = newReg(proto);
+        emit(proto, OP.LOADNIL, rKey, 0, 0);
+
+        // allocate locals for names
+        const nameRegs = names.map((n) => {
+          const r = proto.localCount++;
+          proto.locals.set(n, r);
+          if (r > proto.maxR) proto.maxR = r;
+          return r;
+        });
+
+        const loopStart = Math.floor(proto.code.length / 4);
+        // k,v = next(t, k)  or for ipairs: custom
+        // Use global next
+        const rNext = newReg(proto);
+        emit(proto, OP.GETGLOBAL, rNext, intern('next'), 0);
+        // args: table, key
+        const rArg0 = rNext + 1;
+        const rArg1 = rNext + 2;
+        if (rArg1 > proto.maxR) proto.maxR = rArg1;
+        if (rArg1 >= regTop) regTop = rArg1 + 1;
+        emit(proto, OP.MOVE, rArg0, rTable, 0);
+        emit(proto, OP.MOVE, rArg1, rKey, 0);
+        // CALL next with 2 args, need 2 returns
+        emit(proto, OP.CALL, rNext, 2, 2);
+        // R[rNext]=k, R[rNext+1]=v
+        emit(proto, OP.MOVE, rKey, rNext, 0);
+        if (nameRegs[0] != null) emit(proto, OP.MOVE, nameRegs[0], rNext, 0);
+        if (nameRegs[1] != null) emit(proto, OP.MOVE, nameRegs[1], rNext + 1, 0);
+        for (let i = 2; i < nameRegs.length; i++) emit(proto, OP.LOADNIL, nameRegs[i], 0, 0);
+
+        // if k == nil then break
+        const rIsNil = newReg(proto);
+        const rNil = newReg(proto);
+        emit(proto, OP.LOADNIL, rNil, 0, 0);
+        emit(proto, OP.EQ, rIsNil, rKey, rNil);
+        const jmpOut = proto.code.length;
+        emit(proto, OP.TEST, rIsNil, 0, 0); // if not nil, skip JMP end
+        emit(proto, OP.JMP, 0, 0, 0);
+
+        const snap = scopeEnter(proto);
+        blockUntil(proto, ['end']);
+        scopeExit(proto, snap);
+        expect('end');
+        emit(proto, OP.JMP, loopStart, 0, 0);
+        const outPC = Math.floor(proto.code.length / 4);
+        proto.code[jmpOut + 5] = outPC;
+        return;
+      }
+      throw new Error('malformed for statement');
+    }
+
     if (match('while')) {
       const loopStart = Math.floor(proto.code.length / 4);
       const cond = expr(proto);
@@ -1020,7 +1164,8 @@ function buildVM(sym, keySym) {
   L.push(`elseif op==25 then`);
   L.push(`local fn=R[a] local args={} for i=1,b do args[i]=R[a+i] end`);
   L.push(`local rets={fn(${V[11]}(args,1,b))}`);
-  L.push(`for i=1,(c or 1) do R[a+i-1]=rets[i] end`);
+  L.push(`local nret=c if nret==null or nret<1 then nret=1 end`);
+  L.push(`for i=1,nret do R[a+i-1]=rets[i] end`);
   L.push(`elseif op==26 then`);
   L.push(`if b==0 then return else local out={} for i=0,b-1 do out[i+1]=R[a+i] end return ${V[11]}(out,1,b) end`);
   L.push(`elseif op==27 then`);
