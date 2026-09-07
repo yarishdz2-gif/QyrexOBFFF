@@ -61,11 +61,12 @@ function decimalDecode(decimal, a, b) {
 }
 
 function rollingHash32(buf) {
-  let h = 2166136261 >>> 0;
+  // Luau Number arithmetic is exact for this bounded checksum.
+  let h = 216613;
   for (let i = 0; i < buf.length; i++) {
-    h = (Math.imul(h, 16777619) + buf[i] + 97) >>> 0;
+    h = (h * 257 + buf[i] + 97) % 1000003;
   }
-  return h >>> 0;
+  return h;
 }
 
 function luaQuote(value) {
@@ -113,7 +114,7 @@ function buildLoader(decimalPayload, a, b, expectedHash, sourceLen) {
   L.push(`local ${V[12]}=${V[7]}.concat(${V[13]});${V[13]}=nil;`);
 
   // Integrity check before compilation.
-  L.push(`local ${V[17]}=2166136261;for ${V[14]}=1,#${V[12]} do local ${V[16]}=${V[6]}.byte(${V[12]},${V[14]});${V[17]}=(${V[17]}*16777619+${V[16]}+97)%4294967296 end;if ${V[17]}~=${V[4]} or #${V[12]}~=${V[1]} then return end;`);
+  L.push(`local ${V[17]}=216613;for ${V[14]}=1,#${V[12]} do local ${V[16]}=${V[6]}.byte(${V[12]},${V[14]});${V[17]}=(${V[17]}*257+${V[16]}+97)%1000003 end;if ${V[17]}~=${V[4]} or #${V[12]}~=${V[1]} then return end;`);
 
   // Compile and execute. Prefer loadstring for Roblox; fall back to load only.
   L.push(`local ${V[13]}=loadstring;if ${V[5]}(${V[13]})~='function' then ${V[13]}=load end;if ${V[5]}(${V[13]})~='function' then return end;local ${V[14]},${V[15]}=${V[8]}(${V[13]},${V[12]});${V[12]}=nil;if not ${V[14]} or ${V[5]}(${V[15]})~='function' then return end;return ${V[15]}(...);`);
