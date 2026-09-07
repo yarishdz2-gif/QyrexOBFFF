@@ -159,7 +159,7 @@ function buildLoader(decimalPayload, a, b, expectedHash, sourceLen, antiDump) {
   L.push(`if not ${V[14]} or ${V[5]}(${V[15]})~='function' then return end;`);
   L.push(`return ${V[15]}(...);`);
   L.push('end)(...)');
-  return L.join('');
+  return L.join(' ');
 }
 
 function obfuscateOnce(source, antiDump) {
