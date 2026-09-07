@@ -1,76 +1,42 @@
-
 /**
- * QyrexObf 1.2.0
- * Roblox/Luau compatible numeric payload.
- * Visible payload alphabet: digits 0-9 only.
- * No Unicode payload symbols, XOR, or Base64.
- *
- * Hardening:
- * - dual affine byte transform
- * - per-byte two-state key schedule
- * - keyed chunk permutation
- * - payload checksum
- * - source checksum
- * - randomized identifiers
- * - randomized chunking
- * - best-effort memory wiping
- *
- * Luau compatibility:
- * - simple Lua/Luau syntax
- * - no bitwise operators
- * - no Lua 5.3-only syntax
- * - no unsupported standard-library dependencies
- * - loadstring preferred
+ * QyrexObf 1.2.0 - Render/Node + Luau safe
+ * Numeric payload only. No Base64 and no XOR payload layer.
+ * Keeps the existing affine/key-schedule/chunk/integrity design.
  */
-
 'use strict';
 
 const crypto = require('crypto');
 
 const VERSION = '1.2.0';
-
-const MAX_SOURCE = 1_500_000;
-
+const MAX_SOURCE = 1500000;
 const CHUNK_SIZE_MIN = 72;
 const CHUNK_SIZE_MAX = 156;
-
 const PERM_MOD = 1000003;
-
 const PRNG_MUL_A = 48271;
 const PRNG_MUL_B = 69621;
 
-const ri = (n) => crypto.randomInt(0, n);
+/* Avoid crypto.randomInt so the module also works on older Node runtimes. */
+function ri(n) {
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new Error('Invalid random range');
+  }
+
+  const bytes = crypto.randomBytes(4);
+  const value = bytes.readUInt32BE(0);
+
+  return value % n;
+}
 
 const LUA_RESERVED = new Set([
-  'and',
-  'break',
-  'do',
-  'else',
-  'elseif',
-  'end',
-  'false',
-  'for',
-  'function',
-  'goto',
-  'if',
-  'in',
-  'local',
-  'nil',
-  'not',
-  'or',
-  'repeat',
-  'return',
-  'then',
-  'true',
-  'until',
-  'while'
+  'and','break','do','else','elseif','end','false','for','function','goto',
+  'if','in','local','nil','not','or','repeat','return','then','true','until','while'
 ]);
 
 function rid() {
   const letters =
     'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
-  let out;
+  let out = '';
 
   do {
     out = 'q';
@@ -85,20 +51,20 @@ function rid() {
   return out;
 }
 
+function nextState(state, mul, add) {
+  return (state * mul + add) % PERM_MOD;
+}
+
 function modInverse256(a) {
   a = ((a % 256) + 256) % 256;
 
-  for (let x = 1; x <= 255; x++) {
+  for (let x = 1; x < 256; x++) {
     if (((a * x) % 256) === 1) {
       return x;
     }
   }
 
   throw new Error('Invalid numeric key');
-}
-
-function nextState(state, mul, add) {
-  return (state * mul + add) % PERM_MOD;
 }
 
 function decimalEncode(
@@ -110,7 +76,7 @@ function decimalEncode(
   seedA,
   seedB
 ) {
-  let out = '';
+  const parts = new Array(buf.length);
 
   let sa = seedA;
   let sb = seedB;
@@ -129,35 +95,36 @@ function decimalEncode(
     );
 
     const mask =
-      (sa + (3 * sb) + (i * 29)) % 256;
+      (sa + 3 * sb + i * 29) % 256;
 
-    let stage1 =
+    let s1 =
       (
-        (a1 * buf[i]) +
+        a1 * buf[i] +
         b1 +
         (i % 251) +
         mask
       ) % 256;
 
-    if (stage1 < 0) {
-      stage1 += 256;
-    }
-
-    let stage2 =
+    let s2 =
       (
-        (a2 * stage1) +
+        a2 * s1 +
         b2 +
         ((i * 7) % 251)
       ) % 256;
 
-    if (stage2 < 0) {
-      stage2 += 256;
+    if (s1 < 0) {
+      s1 += 256;
     }
 
-    out += String(stage2).padStart(3, '0');
+    if (s2 < 0) {
+      s2 += 256;
+    }
+
+    parts[i] =
+      String(s2).padStart(3, '0');
   }
 
-  return out;
+  return parts.join('');
 }
 
 function decimalDecode(
@@ -175,12 +142,16 @@ function decimalDecode(
     );
   }
 
-  const inv1 = modInverse256(a1);
-  const inv2 = modInverse256(a2);
+  const inv1 =
+    modInverse256(a1);
 
-  const out = Buffer.alloc(
-    decimal.length / 3
-  );
+  const inv2 =
+    modInverse256(a2);
+
+  const out =
+    Buffer.alloc(
+      decimal.length / 3
+    );
 
   let sa = seedA;
   let sb = seedB;
@@ -203,11 +174,12 @@ function decimalDecode(
     );
 
     const mask =
-      (sa + (3 * sb) + (j * 29)) % 256;
+      (sa + 3 * sb + j * 29) % 256;
 
-    const y = Number(
-      decimal.slice(i, i + 3)
-    );
+    const y =
+      Number(
+        decimal.slice(i, i + 3)
+      );
 
     if (
       !Number.isInteger(y) ||
@@ -219,27 +191,23 @@ function decimalDecode(
       );
     }
 
-    let t =
+    let s1 =
       (
         y -
         b2 -
         ((j * 7) % 251)
       ) % 256;
 
-    if (t < 0) {
-      t += 256;
+    if (s1 < 0) {
+      s1 += 256;
     }
 
-    let stage1 =
-      (inv2 * t) % 256;
-
-    if (stage1 < 0) {
-      stage1 += 256;
-    }
+    s1 =
+      (inv2 * s1) % 256;
 
     let z =
       (
-        stage1 -
+        s1 -
         b1 -
         (j % 251) -
         mask
@@ -262,7 +230,7 @@ function rollingHash32(buf) {
   for (let i = 0; i < buf.length; i++) {
     h =
       (
-        (h * 257) +
+        h * 257 +
         buf[i] +
         97
       ) % PERM_MOD;
@@ -277,7 +245,7 @@ function payloadHash(decimal) {
   for (let i = 0; i < decimal.length; i++) {
     h =
       (
-        (h * 131) +
+        h * 131 +
         decimal.charCodeAt(i) -
         48
       ) % PERM_MOD;
@@ -286,19 +254,13 @@ function payloadHash(decimal) {
   return h;
 }
 
-function luaQuote(value) {
-  return JSON.stringify(
-    String(value)
-  );
-}
-
 function makeChunks(decimal) {
   const chunks = [];
 
-  let position = 0;
+  let p = 0;
 
-  while (position < decimal.length) {
-    const randomRoom =
+  while (p < decimal.length) {
+    const room =
       CHUNK_SIZE_MIN +
       ri(
         CHUNK_SIZE_MAX -
@@ -306,22 +268,20 @@ function makeChunks(decimal) {
         1
       );
 
-    let size =
-      randomRoom -
-      (randomRoom % 3);
-
-    if (size < 3) {
-      size = 3;
-    }
+    const size =
+      Math.max(
+        3,
+        room - (room % 3)
+      );
 
     chunks.push(
       decimal.slice(
-        position,
-        position + size
+        p,
+        p + size
       )
     );
 
-    position += size;
+    p += size;
   }
 
   return chunks;
@@ -330,29 +290,39 @@ function makeChunks(decimal) {
 function shuffleWithKey(arr, seed) {
   const out = arr.slice();
 
-  let state = seed;
+  let s = seed;
 
   for (
     let i = out.length - 1;
     i > 0;
     i--
   ) {
-    state = nextState(
-      state,
+    s = nextState(
+      s,
       PRNG_MUL_B,
       17 + i
     );
 
-    const index =
-      state % (i + 1);
+    const j =
+      s % (i + 1);
 
-    const tmp = out[i];
+    const t =
+      out[i];
 
-    out[i] = out[index];
-    out[index] = tmp;
+    out[i] =
+      out[j];
+
+    out[j] =
+      t;
   }
 
   return out;
+}
+
+function luaQuote(s) {
+  return JSON.stringify(
+    String(s)
+  );
 }
 
 function buildLoader(
@@ -361,39 +331,20 @@ function buildLoader(
   expectedHash,
   sourceLen
 ) {
-  /*
-   * Dedicated identifiers.
-   *
-   * 0  payload
-   * 1  source length
-   * 2  a1
-   * 3  b1
-   * 4  a2
-   * 5  b2
-   * 6  seedA
-   * 7  seedB
-   * 8  orderSeed
-   * 9  source hash
-   * 10 payload hash
-   * 11 type
-   * 12 string
-   * 13 table
-   * 14 pcall
-   *
-   * 15+ temporary variables
-   */
+  const V =
+    Array.from(
+      { length: 24 },
+      rid
+    );
 
-  const V = Array.from(
-    { length: 36 },
-    () => rid()
-  );
-
-  const originalParts =
-    makeChunks(decimalPayload);
+  const chunks =
+    makeChunks(
+      decimalPayload
+    );
 
   const indexed =
-    originalParts.map(
-      (chunk, index) => {
+    chunks.map(
+      function (chunk, index) {
         return (
           String(index + 1) +
           ':' +
@@ -413,574 +364,663 @@ function buildLoader(
       .map(luaQuote)
       .join(',');
 
-  const L = [];
+  const P = [];
 
-  L.push(
-    `-- QyrexObf by ikgmonxr qyrex.hopto.org ${VERSION}\n`
+  P.push(
+    '-- QyrexObf by ikgmonxr qyrex.hopto.org ' +
+    VERSION +
+    '\n'
   );
 
-  L.push(
+  P.push(
     'return(function(...)'
   );
 
-  /*
-   * Constants / payload.
-   */
-
-  L.push(
-    `local ${V[0]}={${payloadTable}};`
+  P.push(
+    'local ' +
+    V[0] +
+    '={' +
+    payloadTable +
+    '}'
   );
 
-  L.push(
-    `local ${V[1]}=${sourceLen};`
+  P.push(
+    'local ' +
+    V[1] +
+    '=' +
+    sourceLen
   );
 
-  L.push(
-    `local ${V[2]}=${params.a1};`
+  P.push(
+    'local ' +
+    V[2] +
+    '=' +
+    params.a1
   );
 
-  L.push(
-    `local ${V[3]}=${params.b1};`
+  P.push(
+    'local ' +
+    V[3] +
+    '=' +
+    params.b1
   );
 
-  L.push(
-    `local ${V[4]}=${params.a2};`
+  P.push(
+    'local ' +
+    V[4] +
+    '=' +
+    params.a2
   );
 
-  L.push(
-    `local ${V[5]}=${params.b2};`
+  P.push(
+    'local ' +
+    V[5] +
+    '=' +
+    params.b2
   );
 
-  L.push(
-    `local ${V[6]}=${params.seedA};`
+  P.push(
+    'local ' +
+    V[6] +
+    '=' +
+    params.seedA
   );
 
-  L.push(
-    `local ${V[7]}=${params.seedB};`
+  P.push(
+    'local ' +
+    V[7] +
+    '=' +
+    params.seedB
   );
 
-  L.push(
-    `local ${V[8]}=${params.orderSeed};`
+  P.push(
+    'local ' +
+    V[9] +
+    '=' +
+    expectedHash
   );
 
-  L.push(
-    `local ${V[9]}=${expectedHash};`
+  P.push(
+    'local ' +
+    V[10] +
+    '=' +
+    payloadHash(decimalPayload)
   );
 
-  L.push(
-    `local ${V[10]}=${payloadHash(decimalPayload)};`
+  P.push(
+    'local ' +
+    V[11] +
+    '=string'
   );
 
-  /*
-   * Native functions.
-   */
-
-  L.push(
-    `local ${V[11]}=type;`
+  P.push(
+    'local ' +
+    V[12] +
+    '=table'
   );
 
-  L.push(
-    `local ${V[12]}=string;`
+  P.push(
+    'local ' +
+    V[13] +
+    '=type'
   );
 
-  L.push(
-    `local ${V[13]}=table;`
+  /* Rebuild original chunk order. */
+
+  P.push(
+    'local ' +
+    V[14] +
+    '={}'
   );
 
-  L.push(
-    `local ${V[14]}=pcall;`
+  P.push(
+    'for ' +
+    V[15] +
+    '=1,#' +
+    V[0] +
+    ' do'
   );
 
-  /*
-   * Soft environment check.
-   * Kept intentionally.
-   */
-
-  L.push(
-    `local ${V[15]}=0;`
+  P.push(
+    'local ' +
+    V[16] +
+    '=' +
+    V[11] +
+    '.find(' +
+    V[0] +
+    '[' +
+    V[15] +
+    '],":",1,true)'
   );
 
-  L.push(
-    `${V[14]}(function()`
+  P.push(
+    'if not ' +
+    V[16] +
+    ' then return end'
   );
 
-  L.push(
-    `local ${V[16]}=${V[11]}(game);`
+  P.push(
+    'local ' +
+    V[17] +
+    '=tonumber(' +
+    V[11] +
+    '.sub(' +
+    V[0] +
+    '[' +
+    V[15] +
+    '],1,' +
+    V[16] +
+    '-1))'
   );
 
-  L.push(
-    `if ${V[16]}=='userdata' then`
+  P.push(
+    'if not ' +
+    V[17] +
+    ' then return end'
   );
 
-  L.push(
-    `${V[15]}=${V[15]}+1;`
+  P.push(
+    'local ' +
+    V[18] +
+    '=' +
+    V[11] +
+    '.sub(' +
+    V[0] +
+    '[' +
+    V[15] +
+    '],' +
+    V[16] +
+    '+1)'
   );
 
-  L.push(
-    `elseif ${V[16]}=='table' then`
+  P.push(
+    V[14] +
+    '[' +
+    V[17] +
+    ']=' +
+    V[18]
   );
 
-  L.push(
-    `${V[15]}=${V[15]}+1;`
+  P.push(
+    'end'
   );
 
-  L.push(
-    `end;`
+  P.push(
+    V[0] +
+    '=' +
+    V[12] +
+    '.concat(' +
+    V[14] +
+    ')'
   );
 
-  L.push(
-    `local ${V[17]}=${V[11]}(_G);`
+  P.push(
+    V[14] +
+    '=nil'
   );
 
-  L.push(
-    `if ${V[17]}=='table' then`
+  /* Payload integrity. */
+
+  P.push(
+    'if #' +
+    V[0] +
+    '~=' +
+    V[1] +
+    '*3 then return end'
   );
 
-  L.push(
-    `${V[15]}=${V[15]}+1;`
+  P.push(
+    'local ' +
+    V[19] +
+    '=811'
   );
 
-  L.push(
-    `end;`
+  P.push(
+    'for ' +
+    V[20] +
+    '=1,#' +
+    V[0] +
+    ' do'
   );
 
-  L.push(
-    `end);`
+  P.push(
+    V[19] +
+    '=('+V[19]+'*131+('+
+    V[11]+
+    '.byte('+
+    V[0]+
+    ','+
+    V[20]+
+    ')-48))%'+
+    PERM_MOD
   );
 
-  /*
-   * Reconstruct chunk ordering.
-   */
-
-  L.push(
-    `local ${V[18]}={};`
+  P.push(
+    'end'
   );
 
-  L.push(
-    `for ${V[19]}=1,#${V[0]} do`
+  P.push(
+    'if ' +
+    V[19] +
+    '~=' +
+    V[10] +
+    ' then return end'
   );
 
-  L.push(
-    `local ${V[20]},${V[21]}=${V[12]}.find(${V[0]}[${V[19]}],':',1,true);`
+  /* Inverse a1. */
+
+  P.push(
+    'local ' +
+    V[21] +
+    '=1'
   );
 
-  L.push(
-    `if not ${V[20]} then return end;`
+  P.push(
+    'while ((' +
+    V[2] +
+    '*' +
+    V[21] +
+    ')%256)~=1 do'
   );
 
-  L.push(
-    `local ${V[22]}=${V[12]}.sub(${V[0]}[${V[19]}],1,${V[20]}-1);`
+  P.push(
+    V[21] +
+    '=' +
+    V[21] +
+    '+1'
   );
 
-  L.push(
-    `local ${V[23]}=${V[12]}.sub(${V[0]}[${V[19]}],${V[20]}+1);`
+  P.push(
+    'if ' +
+    V[21] +
+    '>255 then return end'
   );
 
-  L.push(
-    `local ${V[24]}=tonumber(${V[22]});`
+  P.push(
+    'end'
   );
 
-  L.push(
-    `if not ${V[24]} then return end;`
+  /* Inverse a2. */
+
+  P.push(
+    'local ' +
+    V[22] +
+    '=1'
   );
 
-  L.push(
-    `${V[18]}[${V[24]}]=${V[23]};`
+  P.push(
+    'while ((' +
+    V[4] +
+    '*' +
+    V[22] +
+    ')%256)~=1 do'
   );
 
-  L.push(
-    `end;`
+  P.push(
+    V[22] +
+    '=' +
+    V[22] +
+    '+1'
   );
 
-  /*
-   * Join payload.
-   */
-
-  L.push(
-    `local ${V[25]}=${V[13]}.concat(${V[18]});`
+  P.push(
+    'if ' +
+    V[22] +
+    '>255 then return end'
   );
 
-  L.push(
-    `${V[18]}=nil;`
-  );
-
-  L.push(
-    `${V[0]}=${V[25]};`
-  );
-
-  L.push(
-    `${V[25]}=nil;`
-  );
-
-  /*
-   * Payload length validation.
-   */
-
-  L.push(
-    `if #${V[0]}~=${V[1]}*3 then return end;`
-  );
-
-  /*
-   * Payload checksum.
-   */
-
-  L.push(
-    `local ${V[25]}=811;`
-  );
-
-  L.push(
-    `for ${V[26]}=1,#${V[0]} do`
-  );
-
-  L.push(
-    `${V[25]}=(${V[25]}*131+(${V[12]}.byte(${V[0]},${V[26]})-48))%${PERM_MOD};`
-  );
-
-  L.push(
-    `end;`
-  );
-
-  L.push(
-    `if ${V[25]}~=${V[10]} then return end;`
-  );
-
-  L.push(
-    `${V[25]}=nil;`
-  );
-
-  /*
-   * Modular inverse #1.
-   */
-
-  L.push(
-    `local ${V[27]}=1;`
-  );
-
-  L.push(
-    `while ((${V[2]}*${V[27]})%256)~=1 do`
-  );
-
-  L.push(
-    `${V[27]}=${V[27]}+1;`
-  );
-
-  L.push(
-    `if ${V[27]}>255 then return end;`
-  );
-
-  L.push(
-    `end;`
-  );
-
-  /*
-   * Modular inverse #2.
-   */
-
-  L.push(
-    `local ${V[28]}=1;`
-  );
-
-  L.push(
-    `while ((${V[4]}*${V[28]})%256)~=1 do`
-  );
-
-  L.push(
-    `${V[28]}=${V[28]}+1;`
-  );
-
-  L.push(
-    `if ${V[28]}>255 then return end;`
-  );
-
-  L.push(
-    `end;`
+  P.push(
+    'end'
   );
 
   /*
    * Decoder state.
    */
 
-  L.push(
-    `local ${V[29]}=${V[6]};`
+  P.push(
+    'local ' +
+    V[14] +
+    '={}'
   );
 
-  L.push(
-    `local ${V[30]}=${V[7]};`
+  P.push(
+    'local ' +
+    V[15] +
+    '=1'
   );
 
-  L.push(
-    `local ${V[31]}={};`
+  P.push(
+    'local ' +
+    V[16] +
+    '=' +
+    V[6]
   );
 
-  L.push(
-    `local ${V[32]}=1;`
+  P.push(
+    'local ' +
+    V[17] +
+    '=' +
+    V[7]
+  );
+
+  P.push(
+    'for ' +
+    V[18] +
+    '=1,#' +
+    V[0] +
+    ',3 do'
+  );
+
+  P.push(
+    'local ' +
+    V[19] +
+    '=tonumber(' +
+    V[11] +
+    '.sub(' +
+    V[0] +
+    ',' +
+    V[18] +
+    ',' +
+    V[18] +
+    '+2))'
+  );
+
+  P.push(
+    'if not ' +
+    V[19] +
+    ' or ' +
+    V[19] +
+    '<0 or ' +
+    V[19] +
+    '>255 then return end'
+  );
+
+  P.push(
+    V[16] +
+    '=(' +
+    V[16] +
+    '*' +
+    PRNG_MUL_A +
+    '+97+((' +
+    V[15] +
+    '-1)%251))%' +
+    PERM_MOD
+  );
+
+  P.push(
+    V[17] +
+    '=(' +
+    V[17] +
+    '*' +
+    PRNG_MUL_B +
+    '+193+(((' +
+    V[15] +
+    '-1)*17)%251))%' +
+    PERM_MOD
+  );
+
+  P.push(
+    'local ' +
+    V[20] +
+    '=(' +
+    V[16] +
+    '+3*' +
+    V[17] +
+    '+(((' +
+    V[15] +
+    '-1)*29))%256'
+  );
+
+  P.push(
+    V[19] +
+    '=(' +
+    V[19] +
+    '-' +
+    V[5] +
+    '-(((' +
+    V[15] +
+    '-1)*7)%251))%256'
+  );
+
+  P.push(
+    'if ' +
+    V[19] +
+    '<0 then ' +
+    V[19] +
+    '=' +
+    V[19] +
+    '+256 end'
+  );
+
+  P.push(
+    V[19] +
+    '=(' +
+    V[22] +
+    '*' +
+    V[19] +
+    ')%256'
+  );
+
+  P.push(
+    V[19] +
+    '=(' +
+    V[19] +
+    '-' +
+    V[3] +
+    '-(((' +
+    V[15] +
+    '-1)%251)-' +
+    V[20] +
+    ')%256'
+  );
+
+  P.push(
+    'if ' +
+    V[19] +
+    '<0 then ' +
+    V[19] +
+    '=' +
+    V[19] +
+    '+256 end'
+  );
+
+  P.push(
+    V[14] +
+    '[' +
+    V[15] +
+    ']=' +
+    V[11] +
+    '.char((' +
+    V[21] +
+    '*' +
+    V[19] +
+    ')%256)'
+  );
+
+  P.push(
+    V[15] +
+    '=' +
+    V[15] +
+    '+1'
+  );
+
+  P.push(
+    'end'
+  );
+
+  P.push(
+    V[0] +
+    '=' +
+    V[12] +
+    '.concat(' +
+    V[14] +
+    ')'
+  );
+
+  P.push(
+    V[14] +
+    '=nil'
+  );
+
+  /* Source integrity. */
+
+  P.push(
+    'local ' +
+    V[19] +
+    '=216613'
+  );
+
+  P.push(
+    'for ' +
+    V[20] +
+    '=1,#' +
+    V[0] +
+    ' do'
+  );
+
+  P.push(
+    'local ' +
+    V[23] +
+    '=' +
+    V[11] +
+    '.byte(' +
+    V[0] +
+    ',' +
+    V[20] +
+    ')'
+  );
+
+  P.push(
+    V[19] +
+    '=('+V[19]+'*257+'+
+    V[23]+
+    '+97)%'+
+    PERM_MOD
+  );
+
+  P.push(
+    'end'
+  );
+
+  P.push(
+    'if ' +
+    V[19] +
+    '~=' +
+    V[9] +
+    ' or #' +
+    V[0] +
+    '~=' +
+    V[1] +
+    ' then return end'
+  );
+
+  /* Compile only after all validation. */
+
+  P.push(
+    V[2] +
+    '=nil'
+  );
+
+  P.push(
+    V[3] +
+    '=nil'
+  );
+
+  P.push(
+    V[4] +
+    '=nil'
+  );
+
+  P.push(
+    V[5] +
+    '=nil'
+  );
+
+  P.push(
+    V[6] +
+    '=nil'
+  );
+
+  P.push(
+    V[7] +
+    '=nil'
+  );
+
+  P.push(
+    V[9] +
+    '=nil'
+  );
+
+  P.push(
+    V[10] +
+    '=nil'
   );
 
   /*
-   * Decode.
+   * Luau loader boundary.
    */
 
-  L.push(
-    `for ${V[33]}=1,#${V[0]},3 do`
+  P.push(
+    'local ' +
+    V[21] +
+    '=loadstring'
   );
 
-  L.push(
-    `local ${V[34]}=tonumber(${V[12]}.sub(${V[0]},${V[33]},${V[33]}+2));`
+  P.push(
+    'if ' +
+    V[13] +
+    '(' +
+    V[21] +
+    ')~="function" then return end'
   );
 
-  L.push(
-    `if not ${V[34]} or ${V[34]}<0 or ${V[34]}>255 then return end;`
+  P.push(
+    'local ' +
+    V[22] +
+    ',' +
+    V[23] +
+    '=' +
+    V[21] +
+    '(' +
+    V[0] +
+    ')'
   );
 
-  /*
-   * Update state.
-   */
-
-  L.push(
-    `${V[29]}=(${V[29]}*${PRNG_MUL_A}+97+((${V[32]}-1)%251))%${PERM_MOD};`
+  P.push(
+    V[0] +
+    '=nil'
   );
 
-  L.push(
-    `${V[30]}=(${V[30]}*${PRNG_MUL_B}+193+((((${V[32]}-1)*17)%251)))%${PERM_MOD};`
+  P.push(
+    'if not ' +
+    V[22] +
+    ' or ' +
+    V[13] +
+    '(' +
+    V[23] +
+    ')~="function" then return end'
   );
 
-  /*
-   * Mask.
-   */
-
-  L.push(
-    `local ${V[35]}=(${V[29]}+3*${V[30]}+((${V[32]}-1)*29))%256;`
+  P.push(
+    'return ' +
+    V[22] +
+    '(...)'
   );
 
-  /*
-   * Undo second affine stage.
-   */
-
-  L.push(
-    `${V[34]}=(${V[34]}-${V[5]}-((((${V[32]}-1)*7)%251)))%256;`
-  );
-
-  L.push(
-    `if ${V[34]}<0 then ${V[34]}=${V[34]}+256 end;`
-  );
-
-  L.push(
-    `${V[34]}=(${V[28]}*${V[34]})%256;`
-  );
-
-  /*
-   * Undo first affine stage.
-   */
-
-  L.push(
-    `${V[34]}=(${V[34]}-${V[3]}-((${V[32]}-1)%251)-${V[35]})%256;`
-  );
-
-  L.push(
-    `if ${V[34]}<0 then ${V[34]}=${V[34]}+256 end;`
-  );
-
-  /*
-   * Restore original byte.
-   */
-
-  L.push(
-    `${V[31]}[${V[32]}]=${V[12]}.char((${V[27]}*${V[34]})%256);`
-  );
-
-  L.push(
-    `${V[32]}=${V[32]}+1;`
-  );
-
-  L.push(
-    `end;`
-  );
-
-  /*
-   * Rebuild source.
-   */
-
-  L.push(
-    `local ${V[0]}=${V[13]}.concat(${V[31]});`
-  );
-
-  L.push(
-    `${V[31]}=nil;`
-  );
-
-  /*
-   * Source checksum.
-   */
-
-  L.push(
-    `local ${V[25]}=216613;`
-  );
-
-  L.push(
-    `for ${V[26]}=1,#${V[0]} do`
-  );
-
-  L.push(
-    `local ${V[34]}=${V[12]}.byte(${V[0]},${V[26]});`
-  );
-
-  L.push(
-    `${V[25]}=(${V[25]}*257+${V[34]}+97)%${PERM_MOD};`
-  );
-
-  L.push(
-    `end;`
-  );
-
-  L.push(
-    `if ${V[25]}~=${V[9]} then return end;`
-  );
-
-  L.push(
-    `if #${V[0]}~=${V[1]} then return end;`
-  );
-
-  /*
-   * Best-effort cleanup.
-   */
-
-  L.push(
-    `${V[2]}=nil;`
-  );
-
-  L.push(
-    `${V[3]}=nil;`
-  );
-
-  L.push(
-    `${V[4]}=nil;`
-  );
-
-  L.push(
-    `${V[5]}=nil;`
-  );
-
-  L.push(
-    `${V[6]}=nil;`
-  );
-
-  L.push(
-    `${V[7]}=nil;`
-  );
-
-  L.push(
-    `${V[8]}=nil;`
-  );
-
-  L.push(
-    `${V[9]}=nil;`
-  );
-
-  L.push(
-    `${V[10]}=nil;`
-  );
-
-  L.push(
-    `${V[18]}=nil;`
-  );
-
-  L.push(
-    `${V[25]}=nil;`
-  );
-
-  L.push(
-    `${V[27]}=nil;`
-  );
-
-  L.push(
-    `${V[28]}=nil;`
-  );
-
-  L.push(
-    `${V[29]}=nil;`
-  );
-
-  L.push(
-    `${V[30]}=nil;`
-  );
-
-  L.push(
-    `${V[32]}=nil;`
-  );
-
-  /*
-   * Compile.
-   *
-   * loadstring is preferred for Luau/executors.
-   * load is only used when available.
-   */
-
-  L.push(
-    `local ${V[31]}=loadstring;`
-  );
-
-  L.push(
-    `if ${V[11]}(${V[31]})~='function' then`
-  );
-
-  L.push(
-    `local ${V[25]}=load;`
-  );
-
-  L.push(
-    `if ${V[11]}(${V[25]})~='function' then return end;`
-  );
-
-  L.push(
-    `${V[31]}=${V[25]};`
-  );
-
-  L.push(
-    `end;`
-  );
-
-  /*
-   * Compile source.
-   */
-
-  L.push(
-    `local ${V[25]},${V[26]}=${V[31]}(${V[0]});`
-  );
-
-  L.push(
-    `${V[0]}=nil;`
-  );
-
-  L.push(
-    `${V[31]}=nil;`
-  );
-
-  /*
-   * Stop silently on compilation error.
-   */
-
-  L.push(
-    `if ${V[11]}(${V[25]})~='function' then return end;`
-  );
-
-  /*
-   * Execute.
-   */
-
-  L.push(
-    `return ${V[25]}(...);`
-  );
-
-  L.push(
+  P.push(
     'end)(...)'
   );
 
-  return L.join('');
+  return P.join(';');
 }
 
 function obfuscate(source) {
   const src =
-    String(source ?? '');
+    String(
+      source == null
+        ? ''
+        : source
+    );
 
   if (!src.trim()) {
     throw new Error(
@@ -996,21 +1036,22 @@ function obfuscate(source) {
 
   if (raw.length > MAX_SOURCE) {
     throw new Error(
-      'Too large'
+      'Too large (max 1.5 MB)'
     );
   }
 
-  /*
-   * Odd numbers only so that an inverse
-   * exists modulo 256.
-   */
-
   const params = {
-    a1: 1 + (2 * ri(128)),
-    b1: ri(256),
+    a1:
+      1 + 2 * ri(128),
 
-    a2: 1 + (2 * ri(128)),
-    b2: ri(256),
+    b1:
+      ri(256),
+
+    a2:
+      1 + 2 * ri(128),
+
+    b2:
+      ri(256),
 
     seedA:
       1 + ri(PERM_MOD - 1),
@@ -1021,10 +1062,6 @@ function obfuscate(source) {
     orderSeed:
       1 + ri(PERM_MOD - 1)
   };
-
-  /*
-   * Encode.
-   */
 
   const decimal =
     decimalEncode(
@@ -1037,11 +1074,11 @@ function obfuscate(source) {
       params.seedB
     );
 
-  /*
-   * Decimal-only validation.
-   */
-
-  if (!/^[0-9]+$/.test(decimal)) {
+  if (
+    !/^[0-9]+$/.test(
+      decimal
+    )
+  ) {
     throw new Error(
       'decimal payload violation'
     );
@@ -1056,10 +1093,6 @@ function obfuscate(source) {
     );
   }
 
-  /*
-   * Internal round-trip test.
-   */
-
   const back =
     decimalDecode(
       decimal,
@@ -1071,33 +1104,24 @@ function obfuscate(source) {
       params.seedB
     );
 
-  if (!back.equals(raw)) {
+  if (
+    !back.equals(raw)
+  ) {
     throw new Error(
       'numeric roundtrip failed'
     );
   }
 
-  /*
-   * Source integrity.
-   */
-
-  const expectedHash =
-    rollingHash32(raw);
-
-  /*
-   * Final loader.
-   */
-
   const code =
     buildLoader(
       decimal,
       params,
-      expectedHash,
+      rollingHash32(raw),
       raw.length
     );
 
   return {
-    code,
+    code: code,
 
     stats: {
       inputBytes:
@@ -1110,7 +1134,8 @@ function obfuscate(source) {
         ),
 
       mode:
-        `QyrexObf-${VERSION}`,
+        'QyrexObf-' +
+        VERSION,
 
       layers: [
         'decimal-only-payload',
@@ -1120,9 +1145,8 @@ function obfuscate(source) {
         'payload-integrity-check',
         'numeric-integrity-check',
         'luau-compatible-loader',
-        'soft-environment-check',
-        'best-effort-intermediate-wipe',
-        'randomized-chunking'
+        'randomized-chunking',
+        'render-safe-node-runtime'
       ],
 
       verified:
@@ -1138,11 +1162,6 @@ function obfuscate(source) {
 }
 
 module.exports = {
-  obfuscate,
-  VERSION
+  obfuscate: obfuscate,
+  VERSION: VERSION
 };
-```
-
-La diferencia importante es que **el código que sale de `obfuscate.js` ahora está pensado específicamente para Luau**, no para Lua genérico: usa `loadstring` como primera opción, evita sintaxis problemática, mantiene las operaciones `%`, `string.byte/char`, `string.find`, `table.concat` y separa completamente las variables del decoder.
-
-También conserva tu `VERSION = '1.2.0'` y **no eliminé las capas existentes**.
