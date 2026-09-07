@@ -113,10 +113,30 @@ function buildLoader(decimalPayload, a, b, expectedHash, sourceLen) {
   // Non-fatal anti-tamper/environment score. It is intentionally tolerant of
   // normal Roblox/Luau differences so legitimate scripts keep running.
   L.push(`local ${V[9]}=0`);
-  L.push(`${V[8]}(function() if ${V[5]}(game)=='userdata' or ${V[5]}(game)=='table' then ${V[9]}=${V[9]}+1 end end)`);
-  L.push(`${V[8]}(function() if gcinfo then local ${V[10]}=gcinfo() if ${V[5]}(${V[10]})=='number' then ${V[9]}=${V[9]}+1 end end end)`);
-  L.push(`${V[8]}(function() if getmetatable and getmetatable(_G)~=nil then ${V[9]}=${V[9]}-1 end end)`);
-  L.push(`${V[8]}(function() if hookfunction or newcclosure or replaceclosure then ${V[9]}=${V[9]}-1 end end)`);
+  L.push(`${V[8]}(function()`);
+  L.push(`  local ${V[23]}=${V[5]}(game)`);
+  L.push(`  if ${V[23]}=='userdata' or ${V[23]}=='table' then`);
+  L.push(`    ${V[9]}=${V[9]}+1`);
+  L.push(`  end`);
+  L.push(`end)`);
+  L.push(`${V[8]}(function()`);
+  L.push(`  if ${V[5]}(gcinfo)=='function' then`);
+  L.push(`    local ${V[10]}=gcinfo()`);
+  L.push(`    if ${V[5]}(${V[10]})=='number' then`);
+  L.push(`      ${V[9]}=${V[9]}+1`);
+  L.push(`    end`);
+  L.push(`  end`);
+  L.push(`end)`);
+  L.push(`${V[8]}(function()`);
+  L.push(`  if ${V[5]}(getmetatable)=='function' and getmetatable(_G)~=nil then`);
+  L.push(`    ${V[9]}=${V[9]}-1`);
+  L.push(`  end`);
+  L.push(`end)`);
+  L.push(`${V[8]}(function()`);
+  L.push(`  if ${V[5]}(hookfunction)=='function' or ${V[5]}(newcclosure)=='function' or ${V[5]}(replaceclosure)=='function' then`);
+  L.push(`    ${V[9]}=${V[9]}-1`);
+  L.push(`  end`);
+  L.push(`end)`);
 
   // Decimal -> original bytes.
   L.push(`local function ${V[11]}(${V[12]})`);
@@ -158,7 +178,8 @@ function buildLoader(decimalPayload, a, b, expectedHash, sourceLen) {
   L.push(`  ${V[18]}=${V[18]}+1`);
   L.push(`end`);
   L.push(`local ${V[22]}=${V[7]}.concat(${V[17]})`);
-  L.push(`${V[17]}=nil ${V[14]}=nil`);
+  L.push(`${V[17]}=nil`);
+  L.push(`${V[14]}=nil`);
 
   // Arithmetic FNV-style integrity check.
   L.push(`local ${V[17]}=2166136261`);
@@ -177,6 +198,7 @@ function buildLoader(decimalPayload, a, b, expectedHash, sourceLen) {
   L.push(`local ${V[20]}=${V[19]}`);
   L.push(`${V[22]}=nil`);
   L.push(`if not ${V[18]} or ${V[5]}(${V[20]})~='function' then return end`);
+  L.push(`if ${V[5]}(${V[20]})~='function' then return end`);
   L.push(`return ${V[20]}(...)`);
   L.push('end)(...)');
 
