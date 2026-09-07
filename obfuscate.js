@@ -114,16 +114,36 @@ function buildLoader(symbolPayload, a, b, expectedHash, sourceLen) {
   L.push(`local ${V[6]}=${expectedHash}`);
 
   // Build symbol -> digit lookup table. The packed payload contains no 0-9.
+  // Lua/Luau strings are byte sequences. The first symbol (°) is UTF-8 (2 bytes),
+  // so decoding one byte at a time would split it and break execution. Decode the
+  // symbol stream by recognizing its UTF-8 bytes explicitly, while keeping the
+  // visible payload alphabet exactly as requested.
   L.push(`local ${V[7]}={}`);
-  L.push(`for ${V[8]}=1,#${V[2]} do ${V[7]}[string.sub(${V[2]},${V[8]},${V[8]})]=string.char(48+${V[8]}-1) end`);
+  L.push(`${V[7]}[194]=string.char(48)`);
+  L.push(`${V[7]}[33]=string.char(49)`);
+  L.push(`${V[7]}[34]=string.char(50)`);
+  L.push(`${V[7]}[35]=string.char(51)`);
+  L.push(`${V[7]}[36]=string.char(52)`);
+  L.push(`${V[7]}[37]=string.char(53)`);
+  L.push(`${V[7]}[38]=string.char(54)`);
+  L.push(`${V[7]}[47]=string.char(55)`);
+  L.push(`${V[7]}[40]=string.char(56)`);
+  L.push(`${V[7]}[41]=string.char(57)`);
 
-  // Layer 1: symbols -> decimal digits.
+  // Layer 1: symbols -> decimal digits (UTF-8 aware for °).
   L.push(`local function ${V[9]}(s)`);
-  L.push(`  local o={}`);
-  L.push(`  for ${V[10]}=1,#s do`);
-  L.push(`    local d=${V[7]}[string.sub(s,${V[10]},${V[10]})]`);
-  L.push(`    if d==nil then return nil end`);
-  L.push(`    o[${V[10]}]=d`);
+  L.push(`  local o={} local j=1 local p=1 local n=#s`);
+  L.push(`  while p<=n do`);
+  L.push(`    local c=string.byte(s,p)`);
+  L.push(`    if c==194 then`);
+  L.push(`      if p+1>n or string.byte(s,p+1)~=176 then return nil end`);
+  L.push(`      o[j]=${V[7]}[194] p=p+2`);
+  L.push(`    else`);
+  L.push(`      local d=${V[7]}[c]`);
+  L.push(`      if d==nil then return nil end`);
+  L.push(`      o[j]=d p=p+1`);
+  L.push(`    end`);
+  L.push(`    j=j+1`);
   L.push(`  end`);
   L.push(`  return table.concat(o)`);
   L.push(`end`);
