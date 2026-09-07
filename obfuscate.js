@@ -17,7 +17,7 @@
 'use strict';
 
 const crypto = require('crypto');
-const VERSION = '1.3.1';
+const VERSION = '1.3.2';
 const MAX_SOURCE = 1_500_000;
 const ri = (n) => crypto.randomInt(0, n);
 
@@ -114,23 +114,16 @@ function buildDecimalLoader(decimal, a, b, streamSeed, expectedHash, expectedPay
   const L = [];
 
   // V layout: payload, order, len, affine-A, affine-B, seed, source-hash,
-  // payload-hash, type, string, table, pcall, math, at-flag, joined-enc,
-  // inverse, decoded-table, loop-index, source, source-hash-2, loader, ok, fn.
-  const [P,O,N,A,B,S,H,PH,T,STR,TBL,PC,M,AT,ENC,INV,DEC,I,SRC,H2,LOAD,OK,FN] = V;
+  // payload-hash, type, string, table, pcall, joined-enc, inverse,
+  // decoded-table, loop-index, source, source-hash-2, loader, ok, fn.
+  const [P,O,N,A,B,S,H,PH,T,STR,TBL,PC,ENC,INV,DEC,I,SRC,H2,LOAD,OK,FN] = V;
 
   L.push(`--[[ QyrexObf ${VERSION} | protected loader ]]\n`);
   L.push('return(function(...) ');
   L.push(`local ${P}={${payloadTable}}; local ${O}={${orderTable}}; `);
   L.push(`local ${N}=${sourceLen}; local ${A}=${a}; local ${B}=${b}; local ${S}=${streamSeed}; `);
   L.push(`local ${H}=${expectedHash}; local ${PH}=${expectedPayloadHash}; `);
-  L.push(`local ${T}=type; local ${STR}=string; local ${TBL}=table; local ${PC}=pcall; local ${M}=math; local ${AT}=0; `);
-
-  // Retain the existing lightweight probes, but they are not the decryption key.
-  L.push(`${PC}(function() local t=${T}(game); if t=='userdata' or t=='table' then ${AT}=${AT}+1 end; if ${T}(_G)=='table' then ${AT}=${AT}+1 end end); `);
-  L.push(`${PC}(function() if typeof and game~=nil and typeof(game)=='Instance' then ${AT}=${AT}+1 end end); `);
-  L.push(`${PC}(function() if ${M} and ${M}.floor(3.9)==3 and ${STR}.byte('A')==65 then ${AT}=${AT}+1 end end); `);
-  L.push(`${PC}(function() if getmetatable and getmetatable(_G)~=nil then ${AT}=${AT}-3 end end); `);
-  L.push(`${PC}(function() if debug and debug.gethook then local ok,h=${PC}(debug.gethook); if ok and h~=nil then ${AT}=${AT}-4 end end end); `);
+  L.push(`local ${T}=type; local ${STR}=string; local ${TBL}=table; local ${PC}=pcall; `);
 
   // Restore chunk order before joining.
   L.push(`local ${ENC}={}; for ${I}=1,#${O} do ${ENC}[${I}]=${P}[${O}[${I}]] end; ${P}=nil; ${O}=nil; `);
@@ -155,7 +148,6 @@ function buildDecimalLoader(decimal, a, b, streamSeed, expectedHash, expectedPay
 
   // Compile only after both checks. Immediately drop the plaintext reference afterward.
   L.push(`local ${LOAD}=loadstring; if ${T}(${LOAD})~='function' then ${LOAD}=load end; if ${T}(${LOAD})~='function' then return end; `);
-  L.push(`${PC}(function() if iscclosure and not iscclosure(${LOAD}) then ${AT}=${AT}-2 end end); `);
   L.push(`local ${OK},${FN}=${PC}(${LOAD},${SRC}); ${SRC}=nil; `);
   L.push(`if not ${OK} or ${T}(${FN})~='function' then return end; return ${FN}(...); end)(...)`);
   return L.join('');
@@ -214,9 +206,7 @@ function obfuscate(source) {
         'per-byte-keyed-stream-mask',
         'keyed-chunk-permutation',
         'dual-integrity-check',
-        'soft-anti-tamper',
-        'sandbox-probes',
-        'debug-hook-probe',
+        'runtime-compatibility-checks',
         'double-nest',
         'runtime-key-derivation',
         'luau-roblox-stable',
