@@ -17,7 +17,7 @@
 'use strict';
 
 const crypto = require('crypto');
-const VERSION = '1.3.0';
+const VERSION = '1.3.1';
 const MAX_SOURCE = 1_500_000;
 const ri = (n) => crypto.randomInt(0, n);
 
@@ -147,10 +147,10 @@ function buildDecimalLoader(decimal, a, b, streamSeed, expectedHash, expectedPay
   L.push(`end; ${SRC}=nil; `);
 
   // Source integrity and payload integrity use the same small exact arithmetic hash as JS.
-  L.push(`local ${H2}=216613; for ${I}=1,#${DEC} do local c=${STR}.byte(${DEC}[${I}]); ${H2}=(${H2}*257+c+97)%1000003 end; `);
+  L.push(`local ${H2}=(216613+(${S}%1000003))%1000003; for ${I}=1,#${DEC} do local c=${STR}.byte(${DEC}[${I}]); ${H2}=(${H2}*257+c+97)%1000003 end; `);
   L.push(`if ${H2}~=${H} or #${DEC}~=${N} then return end; `);
   L.push(`local ${SRC}=${TBL}.concat(${DEC}); ${DEC}=nil; `);
-  L.push(`local ph=216613; for ${I}=1,#${SRC} do local c=${STR}.byte(${SRC},${I}); ph=(ph*257+c+97)%1000003 end; `);
+  L.push(`local ph=(216613+((${S}+12345)%1000003))%1000003; for ${I}=1,#${SRC} do local c=${STR}.byte(${SRC},${I}); ph=(ph*257+c+97)%1000003 end; `);
   L.push(`if ph~=${PH} then return end; `);
 
   // Compile only after both checks. Immediately drop the plaintext reference afterward.
