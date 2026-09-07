@@ -1,1034 +1,207 @@
 /**
- * QyrexObf 1.4.0 — Luau-compatible hardened decimal loader
- *
- * Hardening:
- *  - Per-byte keyed stream mask
- *  - Affine byte transform
- *  - Deterministic keyed chunk permutation
- *  - Dual independent payload integrity
- *  - Dual independent source integrity
- *  - Metadata integrity
- *  - Early primitive capture
- *  - Runtime structure validation
- *  - Reference cleanup before compile
- *  - Double nesting
- *  - Random identifiers
- *  - Random chunk sizes
- *
- * NOTE:
- * Client-side executable code can ultimately be observed by a sufficiently
- * capable runtime dumper. This raises analysis cost; it cannot make client
- * execution impossible to inspect.
+ * QyrexObf 1.0.2 — fused protections from:
+ * Hercules · Prometheus · MoonSec patterns · Qyrex decimal core
+ * Soft anti-tamper (does not kill clean Roblox). Double nest + decoys.
  */
-
 'use strict';
-
 const crypto = require('crypto');
-
-const VERSION = '1.4.0';
-const MAX_SOURCE = 1_500_000;
-
+const VERSION = '1.0.2';
 const ri = (n) => crypto.randomInt(0, n);
-
 const RES = new Set([
-  'and', 'break', 'do', 'else', 'elseif', 'end', 'false',
-  'for', 'function', 'goto', 'if', 'in', 'local', 'nil',
-  'not', 'or', 'repeat', 'return', 'then', 'true',
-  'until', 'while'
+  'and','break','do','else','elseif','end','false','for','function','goto',
+  'if','in','local','nil','not','or','repeat','return','then','true','until','while',
 ]);
-
 function rid() {
-  const letters =
-    'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
-
-  let out;
-
+  const L = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  let o;
   do {
-    out = 'q';
-
-    for (let i = 0; i < 7 + ri(6); i++) {
-      out += letters[ri(letters.length)];
-    }
-  } while (RES.has(out));
-
-  return out;
+    o = 'q';
+    for (let i = 0; i < 6 + ri(5); i++) o += L[ri(L.length)];
+  } while (RES.has(o));
+  return o;
 }
-
-/* --------------------------------------------------------- */
-/* XOR arithmetic                                            */
-/* --------------------------------------------------------- */
-
-function xorByte(a, b) {
-  a &= 255;
-  b &= 255;
-
-  let out = 0;
-  let bit = 1;
-
-  for (let i = 0; i < 8; i++, bit *= 2) {
-    const abit = a % 2;
-    const bbit = b % 2;
-
-    if (abit !== bbit) {
-      out += bit;
-    }
-
-    a = Math.floor(a / 2);
-    b = Math.floor(b / 2);
-  }
-
-  return out;
-}
-
-/* --------------------------------------------------------- */
-/* 16-bit normalization                                      */
-/* --------------------------------------------------------- */
-
-function u16(n) {
-  n %= 65536;
-
-  if (n < 0) {
-    n += 65536;
-  }
-
-  return n;
-}
-
-/* --------------------------------------------------------- */
-/* Keyed stream mask                                         */
-/* --------------------------------------------------------- */
-
-function keyedMask(seed, i, a, b) {
-  let s = u16(seed);
-
-  s = u16(
-    s +
-    u16((i + 1) * 40503)
-  );
-
-  s = u16(
-    s +
-    u16(a * 257)
-  );
-
-  s = u16(
-    s +
-    u16(b * 911)
-  );
-
-  s = u16(
-    (s * 25173) +
-    13849
-  );
-
-  return s % 256;
-}
-
-/* --------------------------------------------------------- */
-/* Modular inverse                                           */
-/* --------------------------------------------------------- */
 
 function modInv(a) {
-  for (let x = 1; x < 256; x++) {
-    if (
-      ((a * x) % 256 + 256) % 256 === 1
-    ) {
-      return x;
-    }
-  }
-
-  throw new Error('Invalid affine key');
+  for (let x = 1; x < 256; x++) if (((a * x) % 256 + 256) % 256 === 1) return x;
+  throw new Error('key');
 }
-
-/* --------------------------------------------------------- */
-/* Decimal encoder                                            */
-/* --------------------------------------------------------- */
-
-function decEnc(buf, a, b, seed) {
+function decEnc(buf, a, b) {
   let out = '';
-
   for (let i = 0; i < buf.length; i++) {
-    const masked = xorByte(
-      buf[i],
-      keyedMask(seed, i, a, b)
-    );
-
-    const transformed =
-      (a * masked + b + (i % 251)) % 256;
-
-    out += String(transformed).padStart(3, '0');
+    out += String((a * buf[i] + b + (i % 251)) % 256).padStart(3, '0');
   }
-
   return out;
 }
-
-/* --------------------------------------------------------- */
-/* Decimal decoder                                            */
-/* --------------------------------------------------------- */
-
-function decDec(d, a, b, seed) {
-  if (d.length % 3 !== 0) {
-    throw new Error('Invalid decimal length');
-  }
-
+function decDec(d, a, b) {
   const inv = modInv(a);
-
-  const out =
-    Buffer.alloc(
-      d.length / 3
-    );
-
-  for (
-    let i = 0, j = 0;
-    i < d.length;
-    i += 3, j++
-  ) {
-    const y =
-      Number(
-        d.slice(
-          i,
-          i + 3
-        )
-      );
-
-    if (
-      !Number.isInteger(y) ||
-      y < 0 ||
-      y > 255
-    ) {
-      throw new Error(
-        'Invalid decimal byte'
-      );
-    }
-
-    const z =
-      (
-        y -
-        b -
-        (j % 251)
-      ) % 256;
-
-    const normalized =
-      (z + 256) % 256;
-
-    const unAffine =
-      (inv * normalized) % 256;
-
-    out[j] =
-      xorByte(
-        unAffine,
-        keyedMask(
-          seed,
-          j,
-          a,
-          b
-        )
-      );
+  const out = Buffer.alloc(d.length / 3);
+  for (let i = 0, j = 0; i < d.length; i += 3, j++) {
+    const y = Number(d.slice(i, i + 3));
+    const z = ((y - b - (j % 251)) % 256 + 256) % 256;
+    out[j] = (inv * z) % 256;
   }
-
   return out;
 }
-
-/* --------------------------------------------------------- */
-/* Primary integrity hash                                     */
-/* --------------------------------------------------------- */
-
-function hash32(buf, seed = 0) {
-  let h =
-    u16(
-      21613 + seed
-    );
-
-  for (
-    let i = 0;
-    i < buf.length;
-    i++
-  ) {
-    h =
-      (
-        h * 257 +
-        buf[i] +
-        97
-      ) % 1000003;
-  }
-
+function hash32(buf) {
+  let h = 216613;
+  for (let i = 0; i < buf.length; i++) h = (h * 257 + buf[i] + 97) % 1000003;
   return h;
 }
-
-/* --------------------------------------------------------- */
-/* Secondary integrity hash                                   */
-/* --------------------------------------------------------- */
-
-function hash32b(buf, seed = 0) {
-  let h =
-    u16(
-      52379 +
-      u16(seed * 3)
-    );
-
-  for (
-    let i = 0;
-    i < buf.length;
-    i++
-  ) {
-    h =
-      (
-        h * 263 +
-        buf[i] +
-        53 +
-        (i % 17) * 7
-      ) % 1000003;
-  }
-
-  return h;
-}
-
-/* --------------------------------------------------------- */
-/* Random decimal chunking                                    */
-/* --------------------------------------------------------- */
-
 function chunkDec(d) {
   const out = [];
-
   let p = 0;
-
-  while (
-    p < d.length
-  ) {
-    const room =
-      72 + ri(120);
-
-    const size =
-      Math.max(
-        3,
-        room - (room % 3)
-      );
-
-    out.push(
-      d.slice(
-        p,
-        p + size
-      )
-    );
-
+  while (p < d.length) {
+    const room = 72 + ri(84);
+    const size = Math.max(3, room - (room % 3));
+    out.push(d.slice(p, p + size));
     p += size;
   }
-
   return out;
 }
 
-/* --------------------------------------------------------- */
-/* Keyed permutation                                          */
-/* --------------------------------------------------------- */
+/** Soft fused AT block — Prometheus sanity + Hercules natives + sandbox (score only) */
+function emitAntiTamper(V, L) {
+  const S = V[9]; // score local already declared as 0
+  const pcall = V[8];
+  const type = V[5];
+  const str = V[6];
 
-function keyedShuffle(items, seed) {
-  const shuffled =
-    items.map(
-      (value, index) => ({
-        value,
-        index,
-        k: hash32(
-          Buffer.from(
-            String(index)
-          ),
-          seed
-        )
-      })
-    );
+  // --- Prometheus-style pcall integrity ---
+  L.push(`local ${V[10]}=false; local ${V[21]}=${pcall}(function() ${V[10]}=true end) and ${V[10]}; if not ${V[21]} then ${S}=${S}-10 end; `);
 
-  shuffled.sort(
-    (x, y) =>
-      (x.k - y.k) ||
-      (x.index - y.index)
-  );
+  // --- Hercules-style native type probes (Luau-safe subset) ---
+  L.push(`${pcall}(function() `);
+  L.push(`if ${type}(assert)~='function' or ${type}(error)~='function' or ${type}(pcall)~='function' then ${S}=${S}-8 end; `);
+  L.push(`if ${type}(type)~='function' or ${type}(tostring)~='function' or ${type}(tonumber)~='function' then ${S}=${S}-6 end; `);
+  L.push(`if ${type}(rawget)~='function' or ${type}(rawset)~='function' or ${type}(rawequal)~='function' then ${S}=${S}-6 end; `);
+  L.push(`if ${type}(string)~='table' or ${type}(table)~='table' or ${type}(math)~='table' then ${S}=${S}-8 end; `);
+  L.push(`if ${str}.byte('A')~=65 or ${str}.char(66)~='B' then ${S}=${S}-8 end; `);
+  L.push(`if math.floor(3.9)~=3 or math.abs(-2)~=2 then ${S}=${S}-5 end; `);
+  L.push(`end); `);
 
-  return {
-    parts:
-      shuffled.map(
-        x => x.value
-      ),
+  // --- Prometheus arithmetic / pcall message sanity (soft) ---
+  L.push(`${pcall}(function() `);
+  L.push(`local ok,err=${pcall}(function() return (1-("x")) end); `);
+  L.push(`if ok then ${S}=${S}-6 end; `);
+  L.push(`end); `);
 
-    order:
-      shuffled.map(
-        x => x.index + 1
-      )
-  };
+  // --- Opaque predicates (always true on real VM) ---
+  L.push(`${pcall}(function() local x=7; if x~=x or (x*0)~=0 or (x==x and false) then ${S}=${S}-10 end end); `);
+  L.push(`${pcall}(function() local a=1; local b=2; if not (a+b==3) then ${S}=${S}-5 end end); `);
+
+  // --- Environment / Roblox fingerprints ---
+  L.push(`${pcall}(function() local t=${type}(game); if t=='userdata' or t=='table' then ${S}=${S}+1 end; if ${type}(_G)=='table' then ${S}=${S}+1 end end); `);
+  L.push(`${pcall}(function() if typeof and game~=nil and typeof(game)=='Instance' then ${S}=${S}+1 end end); `);
+  L.push(`${pcall}(function() if game and game.JobId=='00000000-0000-0000-0000-000000000000' then ${S}=${S}-8 end end); `);
+  L.push(`${pcall}(function() if game and (game.PlaceId==8916037983 or game.GameId==8916037983) then ${S}=${S}-8 end end); `);
+  L.push(`${pcall}(function() if getmetatable and getmetatable(_G)~=nil then ${S}=${S}-4 end end); `);
+
+  // --- Debug hook (Prometheus/Hercules) ---
+  L.push(`${pcall}(function() if debug and debug.gethook then local ok,h=${pcall}(debug.gethook); if ok and h~=nil then ${S}=${S}-6 end end end); `);
+  L.push(`${pcall}(function() if debug and debug.getinfo and debug.getinfo(pcall) then local i=debug.getinfo(pcall); if i and i.what and i.what~='C' and i.what~='Lua' then end end end); `);
+
+  // --- Sandbox pollution (Lune/Node/browser) ---
+  L.push(`${pcall}(function() local function has(k) local ok,v=${pcall}(function() return rawget(_G,k) end); return ok and v~=nil end; `);
+  L.push(`if has('process')or has('lune')or has('lute')or has('window')or has('document')or has('Buffer')or has('navigator')or has('globalThis')or has('__dirname')or has('XMLHttpRequest')or has('setTimeout')or has('wally')or has('rojo')or has('selene') then ${S}=${S}-12 end end); `);
+
+  // --- tostring table probe (anti-proxy _G) ---
+  L.push(`${pcall}(function() local t={}; local k=tostring(t); if _G[k]~=nil then ${S}=${S}-6 end end); `);
+
+  // --- error must fail ---
+  L.push(`${pcall}(function() local ok=${pcall}(error,'\\0',0); if ok then ${S}=${S}-8 end end); `);
+
+  // --- iscclosure on loadstring when available ---
+  L.push(`${pcall}(function() if iscclosure and loadstring and not iscclosure(loadstring) then ${S}=${S}-4 end end); `);
 }
 
-/* --------------------------------------------------------- */
-/* Runtime loader generation                                  */
-/* --------------------------------------------------------- */
-
-function buildDecimalLoader(
-  decimal,
-  a,
-  b,
-  streamSeed,
-  metaHash,
-  expectedHash,
-  expectedPayloadHash,
-  expectedHash2,
-  expectedPayloadHash2,
-  sourceLen
-) {
-  const V =
-    Array.from(
-      { length: 35 },
-      rid
-    );
-
-  const originalParts =
-    chunkDec(decimal);
-
-  const shuffled =
-    keyedShuffle(
-      originalParts,
-      streamSeed
-    );
-
-  const payloadTable =
-    shuffled.parts
-      .map(
-        p => JSON.stringify(p)
-      )
-      .join(',');
-
-  const orderTable =
-    shuffled.order.join(',');
-
+function buildDecimalLoader(decimal, a, b, expectedHash, sourceLen) {
+  const V = Array.from({ length: 28 }, rid);
+  const parts = chunkDec(decimal);
+  const payloadTable = parts.map((p) => JSON.stringify(p)).join(',');
   const L = [];
-
-  const [
-    P,
-    O,
-    N,
-    A,
-    B,
-    S,
-    H,
-    PH,
-    H2,
-    PH2,
-    MG,
-    T,
-    STR,
-    TBL,
-    PC,
-    SUB,
-    BYTE,
-    CHAR,
-    CONCAT,
-    ENC,
-    INV,
-    DEC,
-    I,
-    SRC,
-    LOAD,
-    OK,
-    FN,
-    C1,
-    C2,
-    R1,
-    R2,
-    R3,
-    R4,
-    R5
-  ] = V;
-
-  /* Header */
-  L.push(
-    `--[[ QyrexObf ${VERSION} | hardened decimal loader ]]\n`
-  );
-
-  L.push(
-    'return(function(...) '
-  );
-
-  /* ------------------------------------------------------- */
-  /* Capture primitives                                      */
-  /* ------------------------------------------------------- */
-
-  L.push(
-    `local ${T}=type; ` +
-    `local ${STR}=string; ` +
-    `local ${TBL}=table; ` +
-    `local ${PC}=pcall; `
-  );
-
-  L.push(
-    `local ${SUB}=${STR}.sub; ` +
-    `local ${BYTE}=${STR}.byte; ` +
-    `local ${CHAR}=${STR}.char; ` +
-    `local ${CONCAT}=${TBL}.concat; `
-  );
-
-  L.push(
-    `if ` +
-    `${T}(${SUB})~='function' or ` +
-    `${T}(${BYTE})~='function' or ` +
-    `${T}(${CHAR})~='function' or ` +
-    `${T}(${CONCAT})~='function' or ` +
-    `${T}(${PC})~='function' ` +
-    `then return end; `
-  );
-
-  /* ------------------------------------------------------- */
-  /* Payload                                                  */
-  /* ------------------------------------------------------- */
-
-  L.push(
-    `local ${P}={${payloadTable}}; ` +
-    `local ${O}={${orderTable}}; `
-  );
-
-  L.push(
-    `local ${N}=${sourceLen}; ` +
-    `local ${A}=${a}; ` +
-    `local ${B}=${b}; ` +
-    `local ${S}=${streamSeed}; `
-  );
-
-  L.push(
-    `local ${H}=${expectedHash}; ` +
-    `local ${PH}=${expectedPayloadHash}; ` +
-    `local ${H2}=${expectedHash2}; ` +
-    `local ${PH2}=${expectedPayloadHash2}; ` +
-    `local ${MG}=${metaHash}; `
-  );
-
-  /* ------------------------------------------------------- */
-  /* Metadata integrity                                      */
-  /* ------------------------------------------------------- */
-
-  L.push(
-    `if ` +
-    `((${A}*257+${B}*131+${S}*17+${N})%1000003)` +
-    `~=${MG} then return end; `
-  );
-
-  /* ------------------------------------------------------- */
-  /* Structure validation                                    */
-  /* ------------------------------------------------------- */
-
-  L.push(
-    `if ` +
-    `${T}(${P})~='table' or ` +
-    `${T}(${O})~='table' or ` +
-    `#${O}==0 then return end; `
-  );
-
-  /* ------------------------------------------------------- */
-  /* Restore chunk order                                     */
-  /* ------------------------------------------------------- */
-
-  L.push(
-    `local ${ENC}={}; ` +
-    `for ${I}=1,#${O} do ` +
-      `local pos=${O}[${I}]; ` +
-
-      `if ` +
-      `${T}(pos)~='number' or ` +
-      `pos<1 or ` +
-      `pos>#${O} then ` +
-      `return ` +
-      `end; ` +
-
-      `if ${ENC}[pos]~=nil then ` +
-      `return ` +
-      `end; ` +
-
-      `${ENC}[pos]=${P}[${I}]; ` +
-    `end; ` +
-
-    `${P}=nil; ` +
-    `${O}=nil; `
-  );
-
-  /* ------------------------------------------------------- */
-  /* Join decimal payload                                    */
-  /* ------------------------------------------------------- */
-
-  L.push(
-    `local ${SRC}=${CONCAT}(${ENC}); ` +
-    `${ENC}=nil; ` +
-
-    `if ` +
-    `${T}(${SRC})~='string' or ` +
-    `#${SRC}~=${N}*3 then ` +
-    `return ` +
-    `end; `
-  );
-
-  /* ------------------------------------------------------- */
-  /* Payload hash #1                                         */
-  /* ------------------------------------------------------- */
-
-  L.push(
-    `local ${C1}=` +
-    `((21613+${S})%65536+65536)%65536; ` +
-
-    `for ${I}=1,#${SRC} do ` +
-
-      `local c=${BYTE}(${SRC},${I}); ` +
-
-      `${C1}=` +
-      `(${C1}*257+c+97)%1000003; ` +
-
-    `end; ` +
-
-    `if ${C1}~=${PH} then return end; `
-  );
-
-  /* ------------------------------------------------------- */
-  /* Payload hash #2                                         */
-  /* ------------------------------------------------------- */
-
-  L.push(
-    `local ${C2}=` +
-    `((52379+((${S}+12345)*3)%65536)%65536+65536)%65536; ` +
-
-    `for ${I}=1,#${SRC} do ` +
-
-      `local c=${BYTE}(${SRC},${I}); ` +
-      `local j=${I}-1; ` +
-
-      `${C2}=` +
-      `(${C2}*263+c+53+(j%17)*7)%1000003; ` +
-
-    `end; ` +
-
-    `if ${C2}~=${PH2} then return end; `
-  );
-
-  /* ------------------------------------------------------- */
-  /* Modular inverse                                        */
-  /* ------------------------------------------------------- */
-
-  L.push(
-    `local ${INV}=1; ` +
-
-    `while ` +
-    `((${A}*${INV})%256)~=1 do ` +
-
-      `${INV}=${INV}+1; ` +
-
-      `if ${INV}>255 then ` +
-      `return ` +
-      `end; ` +
-
-    `end; `
-  );
-
-  /* ------------------------------------------------------- */
-  /* Decimal -> bytes                                       */
-  /* ------------------------------------------------------- */
-
-  L.push(
-    `local ${DEC}={}; ` +
-
-    `for ${I}=1,#${SRC},3 do ` +
-
-      `local q=${SUB}(${SRC},${I},${I}+2)+0; ` +
-
-      `if q<0 or q>255 then return end; ` +
-
-      `local j=${I}-1; ` +
-
-      `local s=(` +
-        `${S}` +
-        `+(j+1)*374761393` +
-        `+${A}*668265263` +
-        `+${B}*2147483647` +
-      `)%4294967296; ` +
-
-      `if s<0 then ` +
-        `s=s+4294967296 ` +
-      `end; ` +
-
-      `s=` +
-      `(s*1664525+1013904223)` +
-      `%4294967296; ` +
-
-      `local m=s%256; ` +
-
-      `local z=` +
-      `((q-${B}-(j%251))%256+256)%256; ` +
-
-      `local v=` +
-      `(z*${INV})%256; ` +
-
-      `local out=0; ` +
-      `local bit=1; ` +
-
-      `for k=1,8 do ` +
-
-        `local ab=v%2; ` +
-        `local bb=m%2; ` +
-
-        `if ab~=bb then ` +
-          `out=out+bit ` +
-        `end; ` +
-
-        `v=math.floor(v/2); ` +
-        `m=math.floor(m/2); ` +
-        `bit=bit*2; ` +
-
-      `end; ` +
-
-      `${DEC}[#${DEC}+1]=${CHAR}(out); ` +
-
-    `end; ` +
-
-    `${SRC}=nil; `
-  );
-
-  /* ------------------------------------------------------- */
-  /* Source hash #1                                         */
-  /* ------------------------------------------------------- */
-
-  L.push(
-    `local ${C1}=` +
-    `((21613+${S})%65536+65536)%65536; ` +
-
-    `for ${I}=1,#${DEC} do ` +
-
-      `local c=${BYTE}(${DEC}[${I}]); ` +
-
-      `${C1}=` +
-      `(${C1}*257+c+97)%1000003; ` +
-
-    `end; ` +
-
-    `if ${C1}~=${H} then return end; `
-  );
-
-  /* ------------------------------------------------------- */
-  /* Source hash #2                                         */
-  /* ------------------------------------------------------- */
-
-  L.push(
-    `local ${C2}=` +
-    `((52379+(${S}*3)%65536)%65536+65536)%65536; ` +
-
-    `for ${I}=1,#${DEC} do ` +
-
-      `local c=${BYTE}(${DEC}[${I}]); ` +
-      `local j=${I}-1; ` +
-
-      `${C2}=` +
-      `(${C2}*263+c+53+(j%17)*7)%1000003; ` +
-
-    `end; ` +
-
-    `if ${C2}~=${H2} then return end; `
-  );
-
-  /* ------------------------------------------------------- */
-  /* Final length check                                      */
-  /* ------------------------------------------------------- */
-
-  L.push(
-    `if #${DEC}~=${N} then return end; `
-  );
-
-  /* ------------------------------------------------------- */
-  /* Reconstruct plaintext                                   */
-  /* ------------------------------------------------------- */
-
-  L.push(
-    `local ${SRC}=${CONCAT}(${DEC}); ` +
-    `${DEC}=nil; `
-  );
-
-  /* ------------------------------------------------------- */
-  /* Resolve loadstring/load                                 */
-  /* ------------------------------------------------------- */
-
-  L.push(
-    `local ${LOAD}=loadstring; ` +
-
-    `if ${T}(${LOAD})~='function' then ` +
-      `${LOAD}=load; ` +
-    `end; ` +
-
-    `if ${T}(${LOAD})~='function' then ` +
-      `${SRC}=nil; ` +
-      `return ` +
-    `end; `
-  );
-
-  /* ------------------------------------------------------- */
-  /* Compile after integrity checks                          */
-  /* ------------------------------------------------------- */
-
-  L.push(
-    `local ${OK},${FN}=` +
-    `${PC}(${LOAD},${SRC}); ` +
-
-    `${SRC}=nil; ` +
-
-    `if ` +
-    `not ${OK} or ` +
-    `${T}(${FN})~='function' then ` +
-    `return ` +
-    `end; `
-  );
-
-  /* ------------------------------------------------------- */
-  /* Execute                                                 */
-  /* ------------------------------------------------------- */
-
-  L.push(
-    `return ${FN}(...); `
-  );
-
-  L.push(
-    'end)(...)'
-  );
-
+  L.push(`--[[ Protected by QyrexObf v${VERSION} | qyrex.hopto.org ]] `);
+  L.push('return(function(...) ');
+  L.push(`local ${V[0]}={${payloadTable}}; `);
+  L.push(`local ${V[1]}=${sourceLen}; local ${V[2]}=${a}; local ${V[3]}=${b}; local ${V[4]}=${expectedHash}; `);
+  L.push(`local ${V[5]}=type; local ${V[6]}=string; local ${V[7]}=table; local ${V[8]}=pcall; local ${V[9]}=0; `);
+
+  emitAntiTamper(V, L);
+
+  // modular inverse
+  L.push(`local ${V[11]}=1; while ((${V[2]}*${V[11]})%256)~=1 do ${V[11]}=${V[11]}+1; if ${V[11]}>255 then return end end; `);
+  // decode
+  L.push(`local ${V[12]}=${V[7]}.concat(${V[0]}); ${V[0]}=nil; if #${V[12]}~=${V[1]}*3 then return end; `);
+  L.push(`local ${V[13]}={}; local ${V[14]}=1; `);
+  L.push(`for ${V[15]}=1,#${V[12]},3 do `);
+  L.push(`local ${V[16]}=${V[6]}.sub(${V[12]},${V[15]},${V[15]}+2)+0; if ${V[16]}<0 or ${V[16]}>255 then return end; `);
+  L.push(`local ${V[17]}=(((${V[16]}-${V[3]}-(((${V[14]}-1)%251)))%256)+256)%256; `);
+  L.push(`${V[13]}[${V[14]}]=${V[6]}.char(((${V[17]}*${V[11]})%256)); ${V[14]}=${V[14]}+1; `);
+  L.push(`end; ${V[12]}=nil; `);
+  // integrity
+  L.push(`local ${V[18]}=216613; for ${V[14]}=1,#${V[13]} do local ${V[16]}=${V[6]}.byte(${V[13]}[${V[14]}]); ${V[18]}=(${V[18]}*257+${V[16]}+97)%1000003 end; `);
+  L.push(`if ${V[18]}~=${V[4]} or #${V[13]}~=${V[1]} then return end; `);
+  // load + decoys (MoonSec/Prometheus style noise)
+  L.push(`local ${V[19]}=loadstring; if ${V[5]}(${V[19]})~='function' then ${V[19]}=load end; if ${V[5]}(${V[19]})~='function' then return end; `);
+  L.push(`for ${V[20]}=1,16 do ${V[8]}(function() ${V[19]}('--qy'..tostring(${V[20]})..'\\nlocal function _d() return '..tostring(${V[20]}*17)..' end\\nreturn _d()') end) end; `);
+  L.push(`local ${V[22]}=${V[7]}.concat(${V[13]}); ${V[13]}=nil; `);
+  L.push(`local ${V[23]},${V[24]}=${V[8]}(${V[19]},${V[22]}); ${V[22]}=nil; `);
+  L.push(`if not ${V[23]} or ${V[5]}(${V[24]})~='function' then return end; `);
+  L.push(`return ${V[24]}(...); end)(...)`);
   return L.join('');
 }
-
-/* --------------------------------------------------------- */
-/* Obfuscation pipeline                                      */
-/* --------------------------------------------------------- */
 
 function obfuscateDecimal(source, nests) {
   let src = String(source);
   let lastCode = null;
-
-  const levels =
-    Math.max(
-      1,
-      nests | 0
-    );
-
-  for (
-    let n = 0;
-    n < levels;
-    n++
-  ) {
-    const raw =
-      Buffer.from(
-        src,
-        'utf8'
-      );
-
-    if (
-      raw.length >
-      MAX_SOURCE
-    ) {
-      throw new Error(
-        'Too large'
-      );
-    }
-
-    /* Random affine key */
-    const a =
-      1 +
-      2 * ri(128);
-
-    const b =
-      ri(256);
-
-    const streamSeed =
-      ri(65536);
-
-    /* Encode */
-    const decimal =
-      decEnc(
-        raw,
-        a,
-        b,
-        streamSeed
-      );
-
-    if (
-      !/^\d+$/.test(
-        decimal
-      )
-    ) {
-      throw new Error(
-        'decimal payload violation'
-      );
-    }
-
-    /* Internal roundtrip */
-    const back =
-      decDec(
-        decimal,
-        a,
-        b,
-        streamSeed
-      );
-
-    if (
-      !back.equals(raw)
-    ) {
-      throw new Error(
-        'roundtrip failed'
-      );
-    }
-
-    /* Source hashes */
-    const expectedHash =
-      hash32(
-        raw,
-        streamSeed
-      );
-
-    const expectedHash2 =
-      hash32b(
-        raw,
-        streamSeed
-      );
-
-    /* Payload hashes */
-    const decimalBuf =
-      Buffer.from(
-        decimal,
-        'ascii'
-      );
-
-    const expectedPayloadHash =
-      hash32(
-        decimalBuf,
-        streamSeed + 12345
-      );
-
-    const expectedPayloadHash2 =
-      hash32b(
-        decimalBuf,
-        streamSeed + 12345
-      );
-
-    /* Metadata checksum */
-    const metaHash =
-      (
-        a * 257 +
-        b * 131 +
-        streamSeed * 17 +
-        raw.length
-      ) % 1000003;
-
-    /* Build loader */
-    lastCode =
-      buildDecimalLoader(
-        decimal,
-        a,
-        b,
-        streamSeed,
-        metaHash,
-        expectedHash,
-        expectedPayloadHash,
-        expectedHash2,
-        expectedPayloadHash2,
-        raw.length
-      );
-
+  const levels = Math.max(1, nests | 0);
+  for (let n = 0; n < levels; n++) {
+    const raw = Buffer.from(src, 'utf8');
+    if (raw.length > 1500000) throw new Error('Too large');
+    const a = 1 + 2 * ri(128);
+    const b = ri(256);
+    const decimal = decEnc(raw, a, b);
+    if (!decDec(decimal, a, b).equals(raw)) throw new Error('roundtrip failed');
+    lastCode = buildDecimalLoader(decimal, a, b, hash32(raw), raw.length);
     src = lastCode;
   }
-
   return lastCode;
 }
 
-/* --------------------------------------------------------- */
-/* Public API                                                */
-/* --------------------------------------------------------- */
-
 function obfuscate(source) {
-  const src =
-    String(
-      source ?? ''
-    );
-
-  if (
-    !src.trim()
-  ) {
-    throw new Error(
-      'Empty code'
-    );
+  const src = String(source ?? '');
+  if (!src.trim()) throw new Error('Empty code');
+  const code = obfuscateDecimal(src, 2);
+  if (code.includes('dolocal') || code.includes('thenlocal') || code.includes('endlocal')) {
+    throw new Error('internal spacing error');
   }
-
-  const code =
-    obfuscateDecimal(
-      src,
-      2
-    );
-
-  /* Generated loader sanity checks */
-  if (
-    code.includes(
-      'dolocal'
-    ) ||
-    code.includes(
-      'thenlocal'
-    ) ||
-    code.includes(
-      'endlocal'
-    )
-  ) {
-    throw new Error(
-      'internal spacing error'
-    );
-  }
-
-  if (
-    !/^\s*--\[\[/.test(
-      code
-    )
-  ) {
-    throw new Error(
-      'loader generation failed'
-    );
-  }
-
   return {
     code,
-
     stats: {
-      inputBytes:
-        Buffer.byteLength(
-          src,
-          'utf8'
-        ),
-
-      outputBytes:
-        Buffer.byteLength(
-          code,
-          'utf8'
-        ),
-
-      mode:
-        `QyrexObf-${VERSION}`,
-
+      inputBytes: Buffer.byteLength(src, 'utf8'),
+      outputBytes: Buffer.byteLength(code, 'utf8'),
+      mode: `QyrexObf-${VERSION}`,
       nestLevels: 2,
-
       layers: [
         'decimal-affine',
-        'per-byte-keyed-stream-mask',
-        'keyed-chunk-permutation',
-        'dual-source-integrity',
-        'dual-payload-integrity',
-        'metadata-integrity',
-        'runtime-structure-validation',
-        'primitive-capture',
-        'early-reference-release',
-        'plaintext-length-validation',
-        'runtime-compatibility-checks',
+        'integrity-hash',
+        'prometheus-pcall-sanity',
+        'hercules-native-probes',
+        'opaque-predicates',
+        'sandbox-env-scan',
+        'jobid-placeid',
+        'metatable-g-check',
+        'debug-hook-probe',
+        'tostring-proxy-probe',
+        'error-integrity',
+        'iscclosure-probe',
+        'decoy-loadstring-flood',
         'double-nest',
-        'random-identifiers',
-        'random-chunking',
-        'small-integer-runtime-key-derivation',
-        'luau-roblox-stable'
+        'luau-roblox-stable',
       ],
-
-      verified: true
-    }
+      verified: true,
+      fusedFrom: ['Hercules', 'Prometheus', 'MoonSec-patterns', 'Qyrex'],
+    },
   };
 }
 
-module.exports = {
-  obfuscate,
-  VERSION
-};
+module.exports = { obfuscate, VERSION };
