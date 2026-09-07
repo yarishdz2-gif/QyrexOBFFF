@@ -1,7 +1,7 @@
 /**
- * QyrexObf 1.0.2 — fused protections from:
- * Hercules · Prometheus · MoonSec patterns · Qyrex decimal core
- * Soft anti-tamper (does not kill clean Roblox). Double nest + decoys.
+ * QyrexObf 1.0.2 — max soft protections fused from
+ * Hercules · Prometheus · MoonSec patterns · Qyrex core
+ * Stable decimal double-nest, Luau/Roblox safe (no hardlocks).
  */
 'use strict';
 const crypto = require('crypto');
@@ -59,59 +59,129 @@ function chunkDec(d) {
   return out;
 }
 
-/** Soft fused AT block — Prometheus sanity + Hercules natives + sandbox (score only) */
+function opaqueTrue() {
+  const n = 10 + ri(90);
+  const a = 1 + ri(40);
+  const b = a + 1 + ri(40);
+  const choices = [
+    `${n}==${n}`,
+    `not (${n}~=${n})`,
+    `${n}>=${n}`,
+    `${a}+${b - a}==${b}`,
+    `(not (${a}>=${b}))==(${a}<${b})`,
+    `true`,
+  ];
+  return choices[ri(choices.length)];
+}
+function opaqueFalse() {
+  const n = 10 + ri(90);
+  const a = 1 + ri(40);
+  const b = a + 1 + ri(40);
+  const choices = [
+    `${n}~=${n}`,
+    `${n}>${n}`,
+    `${n}%${n}~=0`,
+    `false`,
+    `(not (${a}<${b}))==(${a}>=${b})`,
+  ];
+  return choices[ri(choices.length)];
+}
+
+function emitGarbage(L, count) {
+  for (let i = 0; i < count; i++) {
+    const v = rid();
+    const kind = ri(4);
+    if (kind === 0) {
+      L.push(`local ${v}=${1 + ri(99)}; `);
+    } else if (kind === 1) {
+      L.push(`if ${opaqueFalse()} then local ${v}=${1 + ri(50)} end; `);
+    } else if (kind === 2) {
+      L.push(`for ${v}=1,${1 + ri(2)} do local _=${ri(20)} end; `);
+    } else {
+      L.push(`do local ${v}=${ri(100)}; ${v}=${v}+0 end; `);
+    }
+  }
+}
+
 function emitAntiTamper(V, L) {
-  const S = V[9]; // score local already declared as 0
+  const S = V[9];
   const pcall = V[8];
   const type = V[5];
   const str = V[6];
 
-  // --- Prometheus-style pcall integrity ---
-  L.push(`local ${V[10]}=false; local ${V[21]}=${pcall}(function() ${V[10]}=true end) and ${V[10]}; if not ${V[21]} then ${S}=${S}-10 end; `);
+  // Watermark (Hercules/Prometheus style)
+  L.push(`local ${V[25]}='QyrexObf v${VERSION} | qyrex.hopto.org'; `);
 
-  // --- Hercules-style native type probes (Luau-safe subset) ---
+  // Prometheus pcall integrity
+  L.push(`local ${V[10]}=false; local ${V[21]}=${pcall}(function() ${V[10]}=true end) and ${V[10]}; if not ${V[21]} then ${S}=${S}-12 end; `);
+
+  // Hercules expanded native probes
   L.push(`${pcall}(function() `);
-  L.push(`if ${type}(assert)~='function' or ${type}(error)~='function' or ${type}(pcall)~='function' then ${S}=${S}-8 end; `);
-  L.push(`if ${type}(type)~='function' or ${type}(tostring)~='function' or ${type}(tonumber)~='function' then ${S}=${S}-6 end; `);
-  L.push(`if ${type}(rawget)~='function' or ${type}(rawset)~='function' or ${type}(rawequal)~='function' then ${S}=${S}-6 end; `);
-  L.push(`if ${type}(string)~='table' or ${type}(table)~='table' or ${type}(math)~='table' then ${S}=${S}-8 end; `);
-  L.push(`if ${str}.byte('A')~=65 or ${str}.char(66)~='B' then ${S}=${S}-8 end; `);
-  L.push(`if math.floor(3.9)~=3 or math.abs(-2)~=2 then ${S}=${S}-5 end; `);
+  L.push(`if ${type}(assert)~='function' or ${type}(error)~='function' or ${type}(pcall)~='function' or ${type}(xpcall)~='function' then ${S}=${S}-10 end; `);
+  L.push(`if ${type}(type)~='function' or ${type}(tostring)~='function' or ${type}(tonumber)~='function' or ${type}(select)~='function' then ${S}=${S}-8 end; `);
+  L.push(`if ${type}(next)~='function' or ${type}(rawget)~='function' or ${type}(rawset)~='function' or ${type}(rawequal)~='function' then ${S}=${S}-8 end; `);
+  L.push(`if ${type}(setmetatable)~='function' or ${type}(getmetatable)~='function' then ${S}=${S}-6 end; `);
+  L.push(`if ${type}(string)~='table' or ${type}(table)~='table' or ${type}(math)~='table' then ${S}=${S}-10 end; `);
+  L.push(`if ${type}(${str}.byte)~='function' or ${type}(${str}.char)~='function' or ${type}(${str}.sub)~='function' or ${type}(${str}.len)~='function' then ${S}=${S}-8 end; `);
+  L.push(`if ${type}(table.concat)~='function' or ${type}(table.insert)~='function' then ${S}=${S}-6 end; `);
+  L.push(`if ${str}.byte('A')~=65 or ${str}.char(66)~='B' or #${str}.char(67)~=1 then ${S}=${S}-8 end; `);
+  L.push(`if math.floor(3.9)~=3 or math.abs(-2)~=2 or math.max(1,9)~=9 or math.min(1,9)~=1 then ${S}=${S}-6 end; `);
+  L.push(`if rawequal and not rawequal(pcall,pcall) then ${S}=${S}-6 end; `);
   L.push(`end); `);
 
-  // --- Prometheus arithmetic / pcall message sanity (soft) ---
-  L.push(`${pcall}(function() `);
-  L.push(`local ok,err=${pcall}(function() return (1-("x")) end); `);
-  L.push(`if ok then ${S}=${S}-6 end; `);
-  L.push(`end); `);
+  // Prometheus pcall must fail on type error
+  L.push(`${pcall}(function() local ok=${pcall}(function() return (1-('x')) end); if ok then ${S}=${S}-8 end end); `);
+  L.push(`${pcall}(function() local ok=${pcall}(error,'\\0',0); if ok then ${S}=${S}-10 end end); `);
 
-  // --- Opaque predicates (always true on real VM) ---
-  L.push(`${pcall}(function() local x=7; if x~=x or (x*0)~=0 or (x==x and false) then ${S}=${S}-10 end end); `);
-  L.push(`${pcall}(function() local a=1; local b=2; if not (a+b==3) then ${S}=${S}-5 end end); `);
+  // Opaque predicates (Hercules)
+  for (let i = 0; i < 4; i++) {
+    L.push(`${pcall}(function() if not (${opaqueTrue()}) then ${S}=${S}-6 end end); `);
+  }
+  for (let i = 0; i < 3; i++) {
+    L.push(`${pcall}(function() if (${opaqueFalse()}) then ${S}=${S}-6 end end); `);
+  }
 
-  // --- Environment / Roblox fingerprints ---
+  // Env / Roblox
   L.push(`${pcall}(function() local t=${type}(game); if t=='userdata' or t=='table' then ${S}=${S}+1 end; if ${type}(_G)=='table' then ${S}=${S}+1 end end); `);
   L.push(`${pcall}(function() if typeof and game~=nil and typeof(game)=='Instance' then ${S}=${S}+1 end end); `);
-  L.push(`${pcall}(function() if game and game.JobId=='00000000-0000-0000-0000-000000000000' then ${S}=${S}-8 end end); `);
-  L.push(`${pcall}(function() if game and (game.PlaceId==8916037983 or game.GameId==8916037983) then ${S}=${S}-8 end end); `);
-  L.push(`${pcall}(function() if getmetatable and getmetatable(_G)~=nil then ${S}=${S}-4 end end); `);
+  L.push(`${pcall}(function() if game and type(game)=='table' then ${S}=${S}-8 end end); `);
+  L.push(`${pcall}(function() if game and game.JobId=='00000000-0000-0000-0000-000000000000' then ${S}=${S}-10 end end); `);
+  L.push(`${pcall}(function() if game and (game.PlaceId==8916037983 or game.GameId==8916037983) then ${S}=${S}-10 end end); `);
+  L.push(`${pcall}(function() if getmetatable and getmetatable(_G)~=nil then ${S}=${S}-5 end end); `);
 
-  // --- Debug hook (Prometheus/Hercules) ---
-  L.push(`${pcall}(function() if debug and debug.gethook then local ok,h=${pcall}(debug.gethook); if ok and h~=nil then ${S}=${S}-6 end end end); `);
-  L.push(`${pcall}(function() if debug and debug.getinfo and debug.getinfo(pcall) then local i=debug.getinfo(pcall); if i and i.what and i.what~='C' and i.what~='Lua' then end end end); `);
+  // Debug / hooks
+  L.push(`${pcall}(function() if debug and debug.gethook then local ok,h=${pcall}(debug.gethook); if ok and h~=nil then ${S}=${S}-8 end end end); `);
+  L.push(`${pcall}(function() if debug and debug.sethook then end end); `);
+  L.push(`${pcall}(function() if iscclosure and loadstring and not iscclosure(loadstring) then ${S}=${S}-5 end end); `);
+  L.push(`${pcall}(function() if hookfunction or hookfunc or replaceclosure then ${S}=${S}-4 end end); `);
+  L.push(`${pcall}(function() if getgc and getreg then ${S}=${S}-2 end end); `);
 
-  // --- Sandbox pollution (Lune/Node/browser) ---
+  // Sandbox pollution (expanded)
   L.push(`${pcall}(function() local function has(k) local ok,v=${pcall}(function() return rawget(_G,k) end); return ok and v~=nil end; `);
-  L.push(`if has('process')or has('lune')or has('lute')or has('window')or has('document')or has('Buffer')or has('navigator')or has('globalThis')or has('__dirname')or has('XMLHttpRequest')or has('setTimeout')or has('wally')or has('rojo')or has('selene') then ${S}=${S}-12 end end); `);
+  const badGlobals = [
+    'process','lune','lute','window','document','Buffer','navigator','globalThis','__dirname',
+    'XMLHttpRequest','setTimeout','fetch','wally','rojo','selene','plugin','fs','Deno','Packages',
+    'game:GetService','HttpService', // skip HttpService as real - don't
+  ];
+  // remove false positives
+  const safeBad = [
+    'process','lune','lute','window','document','Buffer','navigator','globalThis','__dirname',
+    'XMLHttpRequest','setTimeout','wally','rojo','selene','Deno','lemur','jsdom','love',
+  ];
+  L.push(`if ${safeBad.map((k) => `has('${k}')`).join(' or ')} then ${S}=${S}-14 end end); `);
 
-  // --- tostring table probe (anti-proxy _G) ---
-  L.push(`${pcall}(function() local t={}; local k=tostring(t); if _G[k]~=nil then ${S}=${S}-6 end end); `);
+  // tostring proxy / _G pollution
+  L.push(`${pcall}(function() local t={}; local k=tostring(t); if _G[k]~=nil then ${S}=${S}-8 end end); `);
+  L.push(`${pcall}(function() if newproxy then local ok,u=${pcall}(newproxy,true); if ok and type(u)=='userdata' then end end end); `);
 
-  // --- error must fail ---
-  L.push(`${pcall}(function() local ok=${pcall}(error,'\\0',0); if ok then ${S}=${S}-8 end end); `);
+  // getfenv / setfenv probes (executor dependent)
+  L.push(`${pcall}(function() if getfenv then local e=getfenv(0); if type(e)~='table' then ${S}=${S}-3 end end end); `);
 
-  // --- iscclosure on loadstring when available ---
-  L.push(`${pcall}(function() if iscclosure and loadstring and not iscclosure(loadstring) then ${S}=${S}-4 end end); `);
+  // Stats / DataModel light checks
+  L.push(`${pcall}(function() if game and game.GetService then local ok,s=${pcall}(function() return game:GetService('RunService') end); if ok and s and typeof and typeof(s)=='Instance' then ${S}=${S}+1 end end end); `);
+
+  // Garbage dead code (Hercules)
+  emitGarbage(L, 6);
 }
 
 function buildDecimalLoader(decimal, a, b, expectedHash, sourceLen) {
@@ -126,10 +196,9 @@ function buildDecimalLoader(decimal, a, b, expectedHash, sourceLen) {
   L.push(`local ${V[5]}=type; local ${V[6]}=string; local ${V[7]}=table; local ${V[8]}=pcall; local ${V[9]}=0; `);
 
   emitAntiTamper(V, L);
+  emitGarbage(L, 4);
 
-  // modular inverse
   L.push(`local ${V[11]}=1; while ((${V[2]}*${V[11]})%256)~=1 do ${V[11]}=${V[11]}+1; if ${V[11]}>255 then return end end; `);
-  // decode
   L.push(`local ${V[12]}=${V[7]}.concat(${V[0]}); ${V[0]}=nil; if #${V[12]}~=${V[1]}*3 then return end; `);
   L.push(`local ${V[13]}={}; local ${V[14]}=1; `);
   L.push(`for ${V[15]}=1,#${V[12]},3 do `);
@@ -137,12 +206,11 @@ function buildDecimalLoader(decimal, a, b, expectedHash, sourceLen) {
   L.push(`local ${V[17]}=(((${V[16]}-${V[3]}-(((${V[14]}-1)%251)))%256)+256)%256; `);
   L.push(`${V[13]}[${V[14]}]=${V[6]}.char(((${V[17]}*${V[11]})%256)); ${V[14]}=${V[14]}+1; `);
   L.push(`end; ${V[12]}=nil; `);
-  // integrity
   L.push(`local ${V[18]}=216613; for ${V[14]}=1,#${V[13]} do local ${V[16]}=${V[6]}.byte(${V[13]}[${V[14]}]); ${V[18]}=(${V[18]}*257+${V[16]}+97)%1000003 end; `);
   L.push(`if ${V[18]}~=${V[4]} or #${V[13]}~=${V[1]} then return end; `);
-  // load + decoys (MoonSec/Prometheus style noise)
   L.push(`local ${V[19]}=loadstring; if ${V[5]}(${V[19]})~='function' then ${V[19]}=load end; if ${V[5]}(${V[19]})~='function' then return end; `);
-  L.push(`for ${V[20]}=1,16 do ${V[8]}(function() ${V[19]}('--qy'..tostring(${V[20]})..'\\nlocal function _d() return '..tostring(${V[20]}*17)..' end\\nreturn _d()') end) end; `);
+  // more decoys
+  L.push(`for ${V[20]}=1,18 do ${V[8]}(function() ${V[19]}('--qy'..tostring(${V[20]})..'\\nlocal function _d() return '..tostring(${V[20]}*17)..' end\\nreturn _d()') end) end; `);
   L.push(`local ${V[22]}=${V[7]}.concat(${V[13]}); ${V[13]}=nil; `);
   L.push(`local ${V[23]},${V[24]}=${V[8]}(${V[19]},${V[22]}); ${V[22]}=nil; `);
   L.push(`if not ${V[23]} or ${V[5]}(${V[24]})~='function' then return end; `);
@@ -184,17 +252,23 @@ function obfuscate(source) {
       layers: [
         'decimal-affine',
         'integrity-hash',
+        'watermark',
         'prometheus-pcall-sanity',
-        'hercules-native-probes',
-        'opaque-predicates',
-        'sandbox-env-scan',
-        'jobid-placeid',
+        'hercules-native-probes-full',
+        'opaque-predicates-true-false',
+        'garbage-dead-code',
+        'sandbox-env-expanded',
+        'jobid-placeid-sandbox-place',
         'metatable-g-check',
         'debug-hook-probe',
+        'hookfunction-probe',
+        'getgc-getreg-probe',
         'tostring-proxy-probe',
         'error-integrity',
+        'getfenv-probe',
+        'runservice-fingerprint',
         'iscclosure-probe',
-        'decoy-loadstring-flood',
+        'decoy-loadstring-x18',
         'double-nest',
         'luau-roblox-stable',
       ],
