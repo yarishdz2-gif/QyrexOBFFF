@@ -2,7 +2,7 @@
  * QyrexObf 1.4.0 — Luau-compatible hardened decimal loader
  *
  * Hardening:
- *  - Per-byte keyed xorshift-like stream mask
+ *  - Per-byte keyed stream mask
  *  - Affine byte transform
  *  - Deterministic keyed chunk permutation
  *  - Dual independent payload integrity
@@ -17,8 +17,8 @@
  *
  * NOTE:
  * Client-side executable code can ultimately be observed by a sufficiently
- * capable runtime dumper. This implementation raises the cost; it cannot make
- * client execution mathematically impossible to inspect.
+ * capable runtime dumper. This raises analysis cost; it cannot make client
+ * execution impossible to inspect.
  */
 
 'use strict';
@@ -55,7 +55,7 @@ function rid() {
 }
 
 /* --------------------------------------------------------- */
-/* Small arithmetic helpers                                  */
+/* XOR arithmetic                                            */
 /* --------------------------------------------------------- */
 
 function xorByte(a, b) {
@@ -80,6 +80,10 @@ function xorByte(a, b) {
   return out;
 }
 
+/* --------------------------------------------------------- */
+/* 16-bit normalization                                      */
+/* --------------------------------------------------------- */
+
 function u16(n) {
   n %= 65536;
 
@@ -91,7 +95,7 @@ function u16(n) {
 }
 
 /* --------------------------------------------------------- */
-/* Key stream                                                */
+/* Keyed stream mask                                         */
 /* --------------------------------------------------------- */
 
 function keyedMask(seed, i, a, b) {
@@ -121,7 +125,7 @@ function keyedMask(seed, i, a, b) {
 }
 
 /* --------------------------------------------------------- */
-/* Affine inverse                                             */
+/* Modular inverse                                           */
 /* --------------------------------------------------------- */
 
 function modInv(a) {
@@ -168,23 +172,33 @@ function decDec(d, a, b, seed) {
   }
 
   const inv = modInv(a);
-  const out = Buffer.alloc(d.length / 3);
+
+  const out =
+    Buffer.alloc(
+      d.length / 3
+    );
 
   for (
     let i = 0, j = 0;
     i < d.length;
     i += 3, j++
   ) {
-    const y = Number(
-      d.slice(i, i + 3)
-    );
+    const y =
+      Number(
+        d.slice(
+          i,
+          i + 3
+        )
+      );
 
     if (
       !Number.isInteger(y) ||
       y < 0 ||
       y > 255
     ) {
-      throw new Error('Invalid decimal byte');
+      throw new Error(
+        'Invalid decimal byte'
+      );
     }
 
     const z =
@@ -200,10 +214,16 @@ function decDec(d, a, b, seed) {
     const unAffine =
       (inv * normalized) % 256;
 
-    out[j] = xorByte(
-      unAffine,
-      keyedMask(seed, j, a, b)
-    );
+    out[j] =
+      xorByte(
+        unAffine,
+        keyedMask(
+          seed,
+          j,
+          a,
+          b
+        )
+      );
   }
 
   return out;
@@ -214,9 +234,16 @@ function decDec(d, a, b, seed) {
 /* --------------------------------------------------------- */
 
 function hash32(buf, seed = 0) {
-  let h = u16(21613 + seed);
+  let h =
+    u16(
+      21613 + seed
+    );
 
-  for (let i = 0; i < buf.length; i++) {
+  for (
+    let i = 0;
+    i < buf.length;
+    i++
+  ) {
     h =
       (
         h * 257 +
@@ -229,7 +256,7 @@ function hash32(buf, seed = 0) {
 }
 
 /* --------------------------------------------------------- */
-/* Independent secondary integrity hash                       */
+/* Secondary integrity hash                                   */
 /* --------------------------------------------------------- */
 
 function hash32b(buf, seed = 0) {
@@ -239,7 +266,11 @@ function hash32b(buf, seed = 0) {
       u16(seed * 3)
     );
 
-  for (let i = 0; i < buf.length; i++) {
+  for (
+    let i = 0;
+    i < buf.length;
+    i++
+  ) {
     h =
       (
         h * 263 +
@@ -258,12 +289,14 @@ function hash32b(buf, seed = 0) {
 
 function chunkDec(d) {
   const out = [];
+
   let p = 0;
 
-  while (p < d.length) {
+  while (
+    p < d.length
+  ) {
     const room =
-      72 +
-      ri(120);
+      72 + ri(120);
 
     const size =
       Math.max(
@@ -289,18 +322,19 @@ function chunkDec(d) {
 /* --------------------------------------------------------- */
 
 function keyedShuffle(items, seed) {
-  const shuffled = items.map(
-    (value, index) => ({
-      value,
-      index,
-      k: hash32(
-        Buffer.from(
-          String(index)
-        ),
-        seed
-      )
-    })
-  );
+  const shuffled =
+    items.map(
+      (value, index) => ({
+        value,
+        index,
+        k: hash32(
+          Buffer.from(
+            String(index)
+          ),
+          seed
+        )
+      })
+    );
 
   shuffled.sort(
     (x, y) =>
@@ -309,18 +343,20 @@ function keyedShuffle(items, seed) {
   );
 
   return {
-    parts: shuffled.map(
-      x => x.value
-    ),
+    parts:
+      shuffled.map(
+        x => x.value
+      ),
 
-    order: shuffled.map(
-      x => x.index + 1
-    )
+    order:
+      shuffled.map(
+        x => x.index + 1
+      )
   };
 }
 
 /* --------------------------------------------------------- */
-/* Runtime loader generator                                   */
+/* Runtime loader generation                                  */
 /* --------------------------------------------------------- */
 
 function buildDecimalLoader(
@@ -335,10 +371,11 @@ function buildDecimalLoader(
   expectedPayloadHash2,
   sourceLen
 ) {
-  const V = Array.from(
-    { length: 35 },
-    rid
-  );
+  const V =
+    Array.from(
+      { length: 35 },
+      rid
+    );
 
   const originalParts =
     chunkDec(decimal);
@@ -391,7 +428,6 @@ function buildDecimalLoader(
     FN,
     C1,
     C2,
-    TRAP,
     R1,
     R2,
     R3,
@@ -399,6 +435,7 @@ function buildDecimalLoader(
     R5
   ] = V;
 
+  /* Header */
   L.push(
     `--[[ QyrexObf ${VERSION} | hardened decimal loader ]]\n`
   );
@@ -408,7 +445,7 @@ function buildDecimalLoader(
   );
 
   /* ------------------------------------------------------- */
-  /* Capture primitives immediately                          */
+  /* Capture primitives                                      */
   /* ------------------------------------------------------- */
 
   L.push(
@@ -436,7 +473,7 @@ function buildDecimalLoader(
   );
 
   /* ------------------------------------------------------- */
-  /* Payload + metadata                                      */
+  /* Payload                                                  */
   /* ------------------------------------------------------- */
 
   L.push(
@@ -465,15 +502,12 @@ function buildDecimalLoader(
 
   L.push(
     `if ` +
-    `((${A}*257+` +
-    `${B}*131+` +
-    `${S}*17+` +
-    `${N})%1000003)` +
+    `((${A}*257+${B}*131+${S}*17+${N})%1000003)` +
     `~=${MG} then return end; `
   );
 
   /* ------------------------------------------------------- */
-  /* Table structure checks                                  */
+  /* Structure validation                                    */
   /* ------------------------------------------------------- */
 
   L.push(
@@ -484,7 +518,7 @@ function buildDecimalLoader(
   );
 
   /* ------------------------------------------------------- */
-  /* Restore original chunk order                            */
+  /* Restore chunk order                                     */
   /* ------------------------------------------------------- */
 
   L.push(
@@ -496,6 +530,10 @@ function buildDecimalLoader(
       `${T}(pos)~='number' or ` +
       `pos<1 or ` +
       `pos>#${O} then ` +
+      `return ` +
+      `end; ` +
+
+      `if ${ENC}[pos]~=nil then ` +
       `return ` +
       `end; ` +
 
@@ -513,6 +551,7 @@ function buildDecimalLoader(
   L.push(
     `local ${SRC}=${CONCAT}(${ENC}); ` +
     `${ENC}=nil; ` +
+
     `if ` +
     `${T}(${SRC})~='string' or ` +
     `#${SRC}~=${N}*3 then ` +
@@ -521,7 +560,7 @@ function buildDecimalLoader(
   );
 
   /* ------------------------------------------------------- */
-  /* Payload primary hash                                    */
+  /* Payload hash #1                                         */
   /* ------------------------------------------------------- */
 
   L.push(
@@ -529,17 +568,19 @@ function buildDecimalLoader(
     `((21613+${S})%65536+65536)%65536; ` +
 
     `for ${I}=1,#${SRC} do ` +
+
       `local c=${BYTE}(${SRC},${I}); ` +
 
       `${C1}=` +
       `(${C1}*257+c+97)%1000003; ` +
+
     `end; ` +
 
     `if ${C1}~=${PH} then return end; `
   );
 
   /* ------------------------------------------------------- */
-  /* Payload secondary hash                                  */
+  /* Payload hash #2                                         */
   /* ------------------------------------------------------- */
 
   L.push(
@@ -547,18 +588,20 @@ function buildDecimalLoader(
     `((52379+((${S}+12345)*3)%65536)%65536+65536)%65536; ` +
 
     `for ${I}=1,#${SRC} do ` +
+
       `local c=${BYTE}(${SRC},${I}); ` +
       `local j=${I}-1; ` +
 
       `${C2}=` +
       `(${C2}*263+c+53+(j%17)*7)%1000003; ` +
+
     `end; ` +
 
     `if ${C2}~=${PH2} then return end; `
   );
 
   /* ------------------------------------------------------- */
-  /* Affine inverse                                          */
+  /* Modular inverse                                        */
   /* ------------------------------------------------------- */
 
   L.push(
@@ -570,14 +613,14 @@ function buildDecimalLoader(
       `${INV}=${INV}+1; ` +
 
       `if ${INV}>255 then ` +
-        `return ` +
+      `return ` +
       `end; ` +
 
     `end; `
   );
 
   /* ------------------------------------------------------- */
-  /* Decimal -> bytes                                        */
+  /* Decimal -> bytes                                       */
   /* ------------------------------------------------------- */
 
   L.push(
@@ -585,23 +628,22 @@ function buildDecimalLoader(
 
     `for ${I}=1,#${SRC},3 do ` +
 
-      `local q=` +
-      `${SUB}(${SRC},${I},${I}+2)+0; ` +
+      `local q=${SUB}(${SRC},${I},${I}+2)+0; ` +
 
-      `if q<0 or q>255 then ` +
-        `return ` +
-      `end; ` +
+      `if q<0 or q>255 then return end; ` +
 
       `local j=${I}-1; ` +
 
-      `local s=` +
-      `(${S}` +
-      `+(j+1)*374761393` +
-      `+${A}*668265263` +
-      `+${B}*2147483647)` +
-      `%4294967296; ` +
+      `local s=(` +
+        `${S}` +
+        `+(j+1)*374761393` +
+        `+${A}*668265263` +
+        `+${B}*2147483647` +
+      `)%4294967296; ` +
 
-      `if s<0 then `s=s+4294967296 end; ` +
+      `if s<0 then ` +
+        `s=s+4294967296 ` +
+      `end; ` +
 
       `s=` +
       `(s*1664525+1013904223)` +
@@ -624,7 +666,7 @@ function buildDecimalLoader(
         `local bb=m%2; ` +
 
         `if ab~=bb then ` +
-          `out=out+bit; ` +
+          `out=out+bit ` +
         `end; ` +
 
         `v=math.floor(v/2); ` +
@@ -634,13 +676,14 @@ function buildDecimalLoader(
       `end; ` +
 
       `${DEC}[#${DEC}+1]=${CHAR}(out); ` +
+
     `end; ` +
 
     `${SRC}=nil; `
   );
 
   /* ------------------------------------------------------- */
-  /* Source primary hash                                    */
+  /* Source hash #1                                         */
   /* ------------------------------------------------------- */
 
   L.push(
@@ -648,17 +691,19 @@ function buildDecimalLoader(
     `((21613+${S})%65536+65536)%65536; ` +
 
     `for ${I}=1,#${DEC} do ` +
+
       `local c=${BYTE}(${DEC}[${I}]); ` +
 
       `${C1}=` +
       `(${C1}*257+c+97)%1000003; ` +
+
     `end; ` +
 
     `if ${C1}~=${H} then return end; `
   );
 
   /* ------------------------------------------------------- */
-  /* Source secondary hash                                  */
+  /* Source hash #2                                         */
   /* ------------------------------------------------------- */
 
   L.push(
@@ -666,18 +711,20 @@ function buildDecimalLoader(
     `((52379+(${S}*3)%65536)%65536+65536)%65536; ` +
 
     `for ${I}=1,#${DEC} do ` +
+
       `local c=${BYTE}(${DEC}[${I}]); ` +
       `local j=${I}-1; ` +
 
       `${C2}=` +
       `(${C2}*263+c+53+(j%17)*7)%1000003; ` +
+
     `end; ` +
 
     `if ${C2}~=${H2} then return end; `
   );
 
   /* ------------------------------------------------------- */
-  /* Final plaintext length validation                       */
+  /* Final length check                                      */
   /* ------------------------------------------------------- */
 
   L.push(
@@ -685,7 +732,7 @@ function buildDecimalLoader(
   );
 
   /* ------------------------------------------------------- */
-  /* Reconstruct plaintext once                              */
+  /* Reconstruct plaintext                                   */
   /* ------------------------------------------------------- */
 
   L.push(
@@ -694,7 +741,7 @@ function buildDecimalLoader(
   );
 
   /* ------------------------------------------------------- */
-  /* Compile only after all checks                           */
+  /* Resolve loadstring/load                                 */
   /* ------------------------------------------------------- */
 
   L.push(
@@ -710,6 +757,10 @@ function buildDecimalLoader(
     `end; `
   );
 
+  /* ------------------------------------------------------- */
+  /* Compile after integrity checks                          */
+  /* ------------------------------------------------------- */
+
   L.push(
     `local ${OK},${FN}=` +
     `${PC}(${LOAD},${SRC}); ` +
@@ -719,11 +770,12 @@ function buildDecimalLoader(
     `if ` +
     `not ${OK} or ` +
     `${T}(${FN})~='function' then ` +
-    `return end; `
+    `return ` +
+    `end; `
   );
 
   /* ------------------------------------------------------- */
-  /* Execute immediately                                    */
+  /* Execute                                                 */
   /* ------------------------------------------------------- */
 
   L.push(
@@ -731,7 +783,7 @@ function buildDecimalLoader(
   );
 
   L.push(
-    `end)(...)`
+    'end)(...)'
   );
 
   return L.join('');
@@ -751,20 +803,27 @@ function obfuscateDecimal(source, nests) {
       nests | 0
     );
 
-  for (let n = 0; n < levels; n++) {
+  for (
+    let n = 0;
+    n < levels;
+    n++
+  ) {
     const raw =
       Buffer.from(
         src,
         'utf8'
       );
 
-    if (raw.length > MAX_SOURCE) {
+    if (
+      raw.length >
+      MAX_SOURCE
+    ) {
       throw new Error(
         'Too large'
       );
     }
 
-    /* Random affine key. Odd values are invertible mod 256. */
+    /* Random affine key */
     const a =
       1 +
       2 * ri(128);
@@ -785,14 +844,16 @@ function obfuscateDecimal(source, nests) {
       );
 
     if (
-      !/^\d+$/.test(decimal)
+      !/^\d+$/.test(
+        decimal
+      )
     ) {
       throw new Error(
         'decimal payload violation'
       );
     }
 
-    /* Internal roundtrip verification */
+    /* Internal roundtrip */
     const back =
       decDec(
         decimal,
@@ -801,13 +862,15 @@ function obfuscateDecimal(source, nests) {
         streamSeed
       );
 
-    if (!back.equals(raw)) {
+    if (
+      !back.equals(raw)
+    ) {
       throw new Error(
         'roundtrip failed'
       );
     }
 
-    /* Two independent hashes for plaintext */
+    /* Source hashes */
     const expectedHash =
       hash32(
         raw,
@@ -820,7 +883,7 @@ function obfuscateDecimal(source, nests) {
         streamSeed
       );
 
-    /* Two independent hashes for decimal payload */
+    /* Payload hashes */
     const decimalBuf =
       Buffer.from(
         decimal,
@@ -848,21 +911,18 @@ function obfuscateDecimal(source, nests) {
         raw.length
       ) % 1000003;
 
+    /* Build loader */
     lastCode =
       buildDecimalLoader(
         decimal,
         a,
         b,
         streamSeed,
-
         metaHash,
-
         expectedHash,
         expectedPayloadHash,
-
         expectedHash2,
         expectedPayloadHash2,
-
         raw.length
       );
 
@@ -882,7 +942,9 @@ function obfuscate(source) {
       source ?? ''
     );
 
-  if (!src.trim()) {
+  if (
+    !src.trim()
+  ) {
     throw new Error(
       'Empty code'
     );
@@ -894,11 +956,17 @@ function obfuscate(source) {
       2
     );
 
-  /* Basic generated-loader sanity checks */
+  /* Generated loader sanity checks */
   if (
-    code.includes('dolocal') ||
-    code.includes('thenlocal') ||
-    code.includes('endlocal')
+    code.includes(
+      'dolocal'
+    ) ||
+    code.includes(
+      'thenlocal'
+    ) ||
+    code.includes(
+      'endlocal'
+    )
   ) {
     throw new Error(
       'internal spacing error'
@@ -906,7 +974,9 @@ function obfuscate(source) {
   }
 
   if (
-    !/^\s*--\[\[/.test(code)
+    !/^\s*--\[\[/.test(
+      code
+    )
   ) {
     throw new Error(
       'loader generation failed'
