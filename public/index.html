@@ -19,6 +19,61 @@ body:before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.24;ba
 /* workspace / navigation */
 .workspace{display:grid;grid-template-columns:205px minmax(0,1fr);gap:14px;align-items:start}.sidebar{position:sticky;top:92px;padding:12px;border:1px solid var(--line);border-radius:20px;background:linear-gradient(180deg,rgba(13,14,22,.94),rgba(8,8,14,.94));box-shadow:var(--shadow);overflow:hidden}.side-label{padding:7px 8px 8px;color:#62657b;font-size:9px;font-weight:800;letter-spacing:.15em}.admin-label{margin-top:12px}.nav-item{width:100%;display:flex;align-items:center;gap:10px;border:1px solid transparent;background:transparent;color:#a9abbc;padding:11px 10px;border-radius:12px;font:700 11px Inter;text-align:left;cursor:pointer;transition:.18s}.nav-item span{width:20px;text-align:center;color:#7f82a0}.nav-item:hover{background:rgba(255,255,255,.04);color:#fff}.nav-item.active{background:linear-gradient(135deg,rgba(139,92,246,.20),rgba(93,228,255,.06));border-color:rgba(139,92,246,.26);color:#fff}.nav-item.active span,.admin-nav span{color:var(--purple)}.sidebar-foot{margin-top:15px;padding:10px 8px;border-top:1px solid var(--line);display:flex;gap:8px;align-items:center;color:#62657b;font-size:9px}.dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 12px rgba(99,230,163,.55)}.views{min-width:0}.view{display:none}.view.active{display:block}.pill{padding:6px 9px;border:1px solid var(--line);border-radius:999px;color:#9deeff;font:800 9px 'JetBrains Mono'}.admin-pill{color:#d6bbff;border-color:rgba(168,107,255,.22)}.hero-panel{min-height:300px}.account-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;padding:18px}.account-card{padding:17px;border:1px solid var(--line);background:rgba(255,255,255,.025);border-radius:16px}.account-card span{display:block;color:var(--muted);font-size:10px;margin-bottom:8px}.account-card strong{display:block;word-break:break-word;font-size:17px}.tasks-large{padding:16px}.tasks-large .task{padding:16px}.store-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:13px;padding:16px}.store-card{padding:20px;border:1px solid var(--line);border-radius:18px;background:rgba(255,255,255,.025);display:flex;flex-direction:column;gap:6px}.store-card.featured{border-color:rgba(168,107,255,.32);background:linear-gradient(180deg,rgba(139,92,246,.10),rgba(255,255,255,.02))}.store-icon{color:var(--cyan);font-size:20px}.store-number{font:800 28px 'JetBrains Mono'}.store-card strong{font-size:14px}.store-card span{color:var(--muted);font-size:11px;margin-bottom:10px}.discord-box{margin:0 16px 16px;padding:16px;border:1px dashed rgba(93,228,255,.18);border-radius:16px;background:rgba(93,228,255,.035);display:flex;align-items:center;justify-content:space-between;gap:12px}.discord-box span{display:block;color:var(--muted);font-size:11px;margin-top:4px}.admin-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding:16px}.admin-stat{padding:13px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.025)}.admin-stat b{display:block;font:800 19px 'JetBrains Mono'}.admin-stat span{color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.08em}.admin-table-wrap{overflow:auto;padding:0 16px 16px}.admin-table{width:100%;border-collapse:collapse;min-width:760px}.admin-table th,.admin-table td{padding:12px 10px;border-bottom:1px solid var(--line);text-align:left;font-size:10px}.admin-table th{color:#777b93;font-size:9px;text-transform:uppercase;letter-spacing:.08em}.admin-table td{color:#d8dae5}.admin-actions{display:flex;gap:6px}.mini-btn{border:1px solid var(--line);border-radius:9px;background:rgba(255,255,255,.04);color:#ddd;padding:7px 8px;cursor:pointer;font:700 9px Inter}.mini-btn:hover{background:rgba(255,255,255,.08)}.mini-btn.danger{color:#ff9aac}.user-tag{display:inline-flex;align-items:center;gap:5px}.user-tag .admin-dot{width:5px;height:5px;border-radius:50%;background:var(--purple)}
 @media(max-width:900px){.workspace{grid-template-columns:1fr}.sidebar{position:sticky;top:8px;z-index:12;display:flex;gap:5px;overflow:auto;padding:7px}.side-label,.sidebar-foot{display:none}.nav-item{width:auto;flex:0 0 auto;white-space:nowrap}.account-grid,.admin-stats{grid-template-columns:1fr 1fr}.store-grid{grid-template-columns:1fr}}
+
+/* ===== QYREXOBF UI ENHANCEMENT PACK ===== */
+:root{
+  --purple3:#c79cff;--cyan2:#a4f4ff;--surface:rgba(255,255,255,.035);
+  --focus:0 0 0 4px rgba(168,107,255,.10),0 0 35px rgba(93,228,255,.04);
+}
+body{background:
+  radial-gradient(700px 420px at 8% 8%,rgba(168,107,255,.13),transparent 62%),
+  radial-gradient(650px 420px at 92% 12%,rgba(93,228,255,.075),transparent 62%),
+  linear-gradient(180deg,#06060b,#030307 80%);
+}
+body:after{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle at 50% 0%,transparent 0,rgba(0,0,0,.08) 70%,rgba(0,0,0,.28));z-index:-1}
+::selection{background:rgba(168,107,255,.35);color:#fff}
+button,input,textarea{font-family:inherit}
+button:focus-visible,input:focus-visible,textarea:focus-visible{outline:none;box-shadow:var(--focus)!important}
+.topbar{border-color:rgba(255,255,255,.105);background:rgba(8,8,14,.82)}
+.topbar:before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:linear-gradient(90deg,rgba(168,107,255,.055),transparent 35%,rgba(93,228,255,.035));}
+.logo-mark{position:relative;overflow:hidden}
+.logo-mark:after{content:"";position:absolute;width:80px;height:2px;left:-45px;top:50%;background:linear-gradient(90deg,transparent,#fff,transparent);opacity:.28;transform:rotate(-45deg);animation:qx-scan 4s linear infinite}
+@keyframes qx-scan{to{left:65px;top:120%}}
+.nav-item{position:relative}
+.nav-item.active:after{content:"";position:absolute;right:7px;width:4px;height:18px;border-radius:5px;background:linear-gradient(var(--purple),var(--cyan));box-shadow:0 0 12px rgba(168,107,255,.55)}
+.panel,.account-card,.store-card,.metric,.task,.sidebar,.auth-box{transition:transform .22s ease,border-color .22s ease,box-shadow .22s ease}
+.panel:hover{border-color:rgba(255,255,255,.105)}
+.account-card:hover,.store-card:hover,.metric:hover,.task:hover{transform:translateY(-2px);border-color:rgba(168,107,255,.20)}
+.editor{line-height:1.65;tab-size:2}
+.editor::placeholder{color:#55586c}
+.toolbar .btn{min-height:38px}
+.btn[disabled],.primary[disabled]{opacity:.6;cursor:not-allowed;filter:none;transform:none}
+.status{display:flex;align-items:center;gap:7px}
+.status.ok:before{content:"";width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 10px rgba(99,230,163,.65)}
+.status.err:before{content:"";width:6px;height:6px;border-radius:50%;background:var(--red);box-shadow:0 0 10px rgba(255,113,138,.55)}
+.balance{box-shadow:inset 0 0 18px rgba(93,228,255,.025)}
+.balance b{min-width:18px;text-align:right}
+.toast{max-width:min(520px,calc(100% - 24px));text-align:center;animation:qx-toast .22s ease-out}
+@keyframes qx-toast{from{opacity:0;transform:translate(-50%,10px) scale(.98)}to{opacity:1;transform:translate(-50%,0) scale(1)}}
+.modal-card{animation:qx-modal .2s ease-out}
+@keyframes qx-modal{from{opacity:0;transform:translateY(10px) scale(.985)}to{opacity:1;transform:none}}
+.price-list .pack{transition:.18s ease}
+.price-list .pack:hover{transform:translateY(-2px);border-color:rgba(168,107,255,.35)}
+.admin-table tbody tr{transition:background .15s ease}
+.admin-table tbody tr:hover{background:rgba(255,255,255,.025)}
+.admin-table td:first-child{font-weight:700}
+.discord-box{box-shadow:inset 0 0 28px rgba(93,228,255,.025)}
+.empty-state{padding:28px;text-align:center;color:var(--muted);font-size:11px}
+.editor-wrap{position:relative}
+.char-counter{position:absolute;right:20px;bottom:18px;color:#53566a;font:600 9px 'JetBrains Mono';pointer-events:none}
+@media(max-width:650px){
+  .top-actions{gap:5px}
+  .top-actions .btn{font-size:10px}
+  .top-actions .balance{font-size:9px}
+  .editor{font-size:12px}
+  .discord-box{align-items:flex-start;flex-direction:column}
+}
+
 </style>
 </head>
 <body>
@@ -66,9 +121,9 @@ body:before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.24;ba
       <main>
         <section class="panel">
           <div class="panel-head"><div><div class="title">SOURCE EDITOR</div><div class="hint">Lua / Luau · procesa en el servidor</div></div><span class="kbd">CTRL + ENTER</span></div>
-          <div class="editor-wrap"><textarea id="in" class="editor" spellcheck="false" placeholder='print("Hello Qyrex")'></textarea><div class="toolbar"><button id="go" class="btn purple">▶ OBFUSCAR · 1 TOKEN</button><button id="ex" class="btn">Example</button><button id="copy" class="btn">Copiar salida</button><button id="clear" class="btn">Limpiar</button></div><div id="stats" class="status"></div></div>
+          <div class="editor-wrap"><textarea id="in" class="editor" spellcheck="false" maxlength="200000" placeholder='print("Hello Qyrex")'></textarea><div id="charCounter" class="char-counter">0 chars</div><div class="toolbar"><button id="go" title="Obfuscar (Ctrl + Enter)" class="btn purple">▶ OBFUSCAR · 1 TOKEN</button><button id="ex" class="btn">Example</button><button id="copy" title="Copiar el output al portapapeles" class="btn">Copiar salida</button><button id="clear" class="btn">Limpiar</button></div><div id="stats" class="status"></div><div class="hint" style="margin-top:7px">Ctrl/⌘ + K enfoca el editor · Tab inserta espacios · Esc cierra ventanas</div></div>
         </section>
-        <section class="panel" style="margin-top:14px"><div class="panel-head"><div><div class="title">VM OUTPUT</div><div class="hint">Código protegido generado por QyrexObf</div></div><button id="copy2" class="btn">Copiar</button></div><div class="editor-wrap"><textarea id="out" class="editor output" readonly></textarea></div></section>
+        <section class="panel" style="margin-top:14px"><div class="panel-head"><div><div class="title">VM OUTPUT</div><div class="hint">Código protegido generado por QyrexObf</div></div><button id="copy2" title="Copiar el output al portapapeles" class="btn">Copiar</button></div><div class="editor-wrap"><textarea id="out" class="editor output" readonly></textarea></div></section>
       </main>
 
       <aside class="side">
@@ -118,24 +173,100 @@ body:before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.24;ba
 <div id="shopModal" class="modal hidden"><div class="modal-card"><div class="modal-top"><div><div class="title">TOKEN STORE</div><div class="hint" style="margin-top:5px">Selecciona tu paquete y continúa al pago</div></div><button id="closeShop" class="x">×</button></div><div class="price-list"><div class="pack active" data-qty="1"><b>1</b><span>token · $1</span></div><div class="pack" data-qty="5"><b>5</b><span>tokens · $5</span></div><div class="pack" data-qty="10"><b>10</b><span>tokens · $10</span></div></div><button id="continuePay" class="primary" style="margin-top:0">Continuar al pago →</button><p class="auth-foot">Soporte / compras: discord.gg/YzCsksufde</p></div></div>
 
 <script>
-const $=id=>document.getElementById(id);let mode='login',session=localStorage.getItem('qyrex_session')||'',selectedQty=1;
+const $=id=>document.getElementById(id);
+let mode='login',session=localStorage.getItem('qyrex_session')||'',selectedQty=1;
+let currentUser=null;
+const API_TIMEOUT=20000;
+const safeText=v=>String(v??'');
+
 const DISCORD_URL='https://discord.gg/YzCsksufde';
 function toast(msg,ok=false){$('toast').textContent=msg;$('toast').className='toast '+(ok?'ok':'err');clearTimeout(window._toast);window._toast=setTimeout(()=>$('toast').className='toast hidden',3200)}
 function headers(){return {'Content-Type':'application/json',...(session?{Authorization:'Bearer '+session}:{})}}
-async function api(url,opts={}){const r=await fetch(url,{...opts,headers:{...headers(),...(opts.headers||{})}});let j={};try{j=await r.json()}catch{}if(!r.ok)throw Object.assign(new Error(j.error||'Error de servidor'),{status:r.status,data:j});return j}
+async function api(url,opts={}){
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),API_TIMEOUT);
+  try{
+    const r=await fetch(url,{...opts,signal:controller.signal,headers:{...headers(),...(opts.headers||{})}});
+    let j={}; try{j=await r.json()}catch{}
+    if(!r.ok) throw Object.assign(new Error(j.error||`Error de servidor (${r.status})`),{status:r.status,data:j});
+    return j;
+  }catch(e){
+    if(e.name==='AbortError') throw new Error('La solicitud tardó demasiado. Inténtalo de nuevo.');
+    throw e;
+  }finally{clearTimeout(timer)}
+}
 function setMode(m){mode=m;$('loginTab').classList.toggle('active',m==='login');$('registerTab').classList.toggle('active',m==='register');$('userField').classList.toggle('hidden',m!=='register');$('confirmField').classList.toggle('hidden',m!=='register');$('loginLabel').textContent=m==='login'?'Email o usuario':'Email';$('login').placeholder=m==='login'?'usuario o email':'tu@email.com';$('authBtn').textContent=m==='login'?'Entrar a QyrexObf':'Crear mi cuenta';$('authMsg').textContent=''}
 $('loginTab').onclick=()=>setMode('login');$('registerTab').onclick=()=>setMode('register');document.querySelectorAll('.nav-item[data-view]').forEach(btn=>btn.onclick=()=>{document.querySelectorAll('.nav-item[data-view]').forEach(x=>x.classList.remove('active'));btn.classList.add('active');document.querySelectorAll('.view').forEach(v=>{v.classList.remove('active');v.classList.remove('hidden')});const view=$('view-'+btn.dataset.view);if(view)view.classList.add('active');if(btn.dataset.view==='admin')loadAdmin()});
 
-$('authForm').onsubmit=async e=>{e.preventDefault();$('authMsg').textContent='Comprobando...';try{if(mode==='register'&&$('password').value!==$('confirm').value)throw new Error('Las contraseñas no coinciden.');const body=mode==='login'?{login:$('login').value,password:$('password').value}:{username:$('username').value,email:$('login').value,password:$('password').value};const j=await api(mode==='login'?'/api/login':'/api/register',{method:'POST',body:JSON.stringify(body)});session=j.token;localStorage.setItem('qyrex_session',session);showApp(j.user);toast(mode==='login'?'Sesión iniciada correctamente':'Cuenta creada correctamente',true)}catch(e){$('authMsg').textContent=e.message;toast(e.message)}};
+$('authForm').onsubmit=async e=>{
+  e.preventDefault();
+  const btn=$('authBtn'); btn.disabled=true; $('authMsg').textContent='Comprobando…';
+  try{
+    const password=$('password').value.trim();
+    if(password.length<8) throw new Error('La contraseña debe tener al menos 8 caracteres.');
+    if(mode==='register'){
+      const username=$('username').value.trim(),email=$('login').value.trim();
+      if(!/^[a-zA-Z0-9_.-]{3,24}$/.test(username)) throw new Error('El usuario debe tener 3–24 caracteres y solo usar letras, números, _ . o -.');
+      if(!/^\S+@\S+\.\S+$/.test(email)) throw new Error('Introduce un email válido.');
+      if(password!==$('confirm').value) throw new Error('Las contraseñas no coinciden.');
+    }
+    const body=mode==='login'
+      ? {login:$('login').value.trim(),password}
+      : {username:$('username').value.trim(),email:$('login').value.trim(),password};
+    const j=await api(mode==='login'?'/api/login':'/api/register',{method:'POST',body:JSON.stringify(body)});
+    if(!j.token||!j.user) throw new Error('Respuesta de autenticación inválida.');
+    session=j.token; localStorage.setItem('qyrex_session',session); currentUser=j.user;
+    showApp(j.user); toast(mode==='login'?'Sesión iniciada correctamente':'Cuenta creada correctamente',true);
+  }catch(e){$('authMsg').textContent=e.message;toast(e.message)}
+  finally{btn.disabled=false}
+};
 function showApp(user){$('auth').classList.add('hidden');$('app').classList.remove('hidden');render(user);api('/api/task/open-obfuscator',{method:'POST',body:'{}'}).catch(()=>{})}
-function render(u){$('accountName').textContent='@'+u.username;$('accountEmail').textContent=u.email;$('tokens').textContent=u.tokens;$('topTokens').textContent=u.tokens;$('count').textContent=u.stats.obfuscations;$('bytes').textContent=Number(u.stats.bytes||0).toLocaleString();$('accUser').textContent='@'+u.username;$('accEmail2').textContent=u.email;$('accTokens2').textContent=u.tokens;$('accCount2').textContent=u.stats.obfuscations;const items=[['account','Cuenta creada','Tu cuenta está lista.'],['openObfuscator','Visitar el ofuscador','Esta tarea se completa al abrir el editor.'],['firstObfuscation','Primera ofuscación','Usa 1 token para proteger tu primer script.']];const html=items.map(([k,t,d])=>`<div class="task ${u.tasks[k]?'done':''}"><div class="check">${u.tasks[k]?'✓':'○'}</div><div><strong>${t}</strong><span>${d}</span></div></div>`).join('');$('tasks').innerHTML=html;$('tasksLarge').innerHTML=html;$('adminNavWrap').classList.toggle('hidden',!(u.isAdmin||String(u.username).toLowerCase()==='qyrex'))} 
+function render(u){
+  currentUser=u;
+  const stats=u.stats||{},tasksState=u.tasks||{};
+  $('accountName').textContent='@'+u.username;$('accountEmail').textContent=u.email;
+  $('tokens').textContent=Number(u.tokens||0);$('topTokens').textContent=Number(u.tokens||0);
+  $('count').textContent=Number(stats.obfuscations||0);$('bytes').textContent=Number(stats.bytes||0).toLocaleString();
+$('accUser').textContent='@'+u.username;$('accEmail2').textContent=u.email;$('accTokens2').textContent=u.tokens;$('accCount2').textContent=Number(stats.obfuscations||0);const items=[['account','Cuenta creada','Tu cuenta está lista.'],['openObfuscator','Visitar el ofuscador','Esta tarea se completa al abrir el editor.'],['firstObfuscation','Primera ofuscación','Usa 1 token para proteger tu primer script.']];const html=items.map(([k,t,d])=>`<div class="task ${tasksState[k]?'done':''}"><div class="check">${tasksState[k]?'✓':'○'}</div><div><strong>${t}</strong><span>${d}</span></div></div>`).join('');$('tasks').innerHTML=html;$('tasksLarge').innerHTML=html;$('adminNavWrap').classList.toggle('hidden',!(u.isAdmin||String(u.username).toLowerCase()==='qyrex'))} 
 async function loadAdmin(){try{const j=await api('/api/admin/overview');const st=j.stats;$('adminStats').innerHTML=[['Usuarios',st.users],['Tokens',st.tokens],['Ofuscaciones',st.obfuscations],['Compras',st.purchases]].map(x=>`<div class="admin-stat"><b>${Number(x[1]).toLocaleString()}</b><span>${x[0]}</span></div>`).join('');$('adminUsers').innerHTML=j.users.map(u=>`<tr><td><span class="user-tag">${(u.isAdmin)?'<span class="admin-dot"></span>':''}@${escapeHtml(u.username)}</span></td><td>${escapeHtml(u.email)}</td><td><b>${u.tokens}</b></td><td>${u.stats?.obfuscations||0}</td><td>${new Date(u.createdAt).toLocaleDateString()}</td><td><div class="admin-actions"><button class="mini-btn" data-add="${u.id}" data-amount="1">+1</button><button class="mini-btn" data-add="${u.id}" data-amount="5">+5</button><button class="mini-btn" data-add="${u.id}" data-amount="-1">−1</button><button class="mini-btn danger" data-del="${u.id}" ${u.isAdmin?'disabled':''}>Eliminar</button></div></td></tr>`).join('');document.querySelectorAll('[data-add]').forEach(b=>b.onclick=async()=>{try{const n=Number(b.dataset.amount||1);await api('/api/admin/users/'+b.dataset.add+'/tokens',{method:'POST',body:JSON.stringify({amount:n})});toast((n>0?'Token añadido':'Token retirado'),true);loadAdmin()}catch(e){toast(e.message)}});document.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{if(!confirm('¿Eliminar esta cuenta?'))return;try{await api('/api/admin/users/'+b.dataset.del,{method:'DELETE'});toast('Cuenta eliminada',true);loadAdmin()}catch(e){toast(e.message)}})}catch(e){toast(e.message)}}
 function escapeHtml(v){return String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+
+function updateCounter(){
+  const n=$('in').value.length;
+  $('charCounter').textContent=n.toLocaleString()+' chars';
+}
+$('in').addEventListener('input',updateCounter);
+$('in').addEventListener('keydown',e=>{
+  if(e.key==='Tab'){
+    e.preventDefault();
+    const s=e.target.selectionStart,end=e.target.selectionEnd;
+    e.target.value=e.target.value.slice(0,s)+'  '+e.target.value.slice(end);
+    e.target.selectionStart=e.target.selectionEnd=s+2;
+    updateCounter();
+  }
+});
+window.addEventListener('keydown',e=>{
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){
+    e.preventDefault(); $('in').focus();
+  }
+  if(e.key==='Escape'&&!$('shopModal').classList.contains('hidden')) closeShop();
+});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&session) refresh()});
+
 async function refresh(){try{const j=await api('/api/me');render(j.user)}catch{session='';localStorage.removeItem('qyrex_session');location.reload()}}
-$('go').onclick=async()=>{const code=$('in').value;if(!code.trim())return toast('Escribe código antes de ofuscar.');if(Number($('tokens').textContent)<1)return toast('No tienes tokens. Compra uno para continuar.');$('go').disabled=true;$('stats').textContent='Procesando...';try{const j=await api('/api/obfuscate',{method:'POST',body:JSON.stringify({code})});$('out').value=j.code;$('stats').className='status ok';$('stats').textContent='✓ Completado · 1 token consumido · tokens restantes: '+j.tokens;await refresh();toast('Ofuscación completada',true)}catch(e){$('stats').className='status err';$('stats').textContent=e.message;if(e.status===402)openShop()}finally{$('go').disabled=false}};
+$('go').onclick=async()=>{const code=$('in').value;if(!code.trim())return toast('Escribe código antes de ofuscar.');if(Number($('tokens').textContent)<1)return toast('No tienes tokens. Compra uno para continuar.');$('go').disabled=true;$('go').textContent='⏳ PROCESANDO…';$('stats').className='status';$('stats').textContent='Procesando en el servidor…';try{const j=await api('/api/obfuscate',{method:'POST',body:JSON.stringify({code})});$('out').value=j.code;$('stats').className='status ok';$('stats').textContent='✓ Completado · 1 token consumido · tokens restantes: '+j.tokens;await refresh();toast('Ofuscación completada',true)}catch(e){$('stats').className='status err';$('stats').textContent=e.message;if(e.status===402)openShop()}finally{$('go').disabled=false;$('go').textContent='▶ OBFUSCAR · 1 TOKEN'}};
 $('in').addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Enter')$('go').click()});
-$('ex').onclick=()=>{$('in').value='local message = "Hello Qyrex"\nprint(message)';$('stats').textContent='Ejemplo cargado.'};$('clear').onclick=()=>{$('in').value='';$('out').value='';$('stats').textContent=''};
-async function copyOut(){try{await navigator.clipboard.writeText($('out').value||'');toast('Output copiado',true)}catch{toast('No se pudo copiar automáticamente')}}$('copy').onclick=copyOut;$('copy2').onclick=copyOut;
+$('ex').onclick=()=>{$('in').value='-- QyrexObf example\nlocal message = "Hello Qyrex"\nlocal count = 3\nprint(message, count)';$('stats').className='status';$('stats').textContent='Ejemplo cargado.';updateCounter();$('in').focus()};
+$('clear').onclick=()=>{$('in').value='';$('out').value='';$('stats').className='status';$('stats').textContent='';updateCounter();$('in').focus()};
+async function copyOut(){
+  const value=$('out').value||'';
+  if(!value.trim()) return toast('No hay output para copiar.');
+  try{
+    await navigator.clipboard.writeText(value); toast('Output copiado',true);
+  }catch{
+    try{$('out').focus();$('out').select();document.execCommand('copy');toast('Output copiado',true)}
+    catch{toast('No se pudo copiar automáticamente')}
+  }
+}$('copy').onclick=copyOut;$('copy2').onclick=copyOut;
 $('logout').onclick=async()=>{try{await api('/api/logout',{method:'POST',body:'{}'})}catch{}session='';localStorage.removeItem('qyrex_session');location.reload()};
 function openShop(){$('shopModal').classList.remove('hidden')}function closeShop(){$('shopModal').classList.add('hidden')}$('buyTop').onclick=openShop;$('buySide').onclick=openShop;$('closeShop').onclick=closeShop;
 document.querySelectorAll('.pack').forEach(p=>p.onclick=()=>{document.querySelectorAll('.pack').forEach(x=>x.classList.remove('active'));p.classList.add('active');selectedQty=Number(p.dataset.qty)});
