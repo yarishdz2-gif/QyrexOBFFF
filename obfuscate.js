@@ -17,7 +17,7 @@
 'use strict';
 
 const crypto = require('crypto');
-const VERSION = '1.3.3';
+const VERSION = '1.3.5';
 const MAX_SOURCE = 1_500_000;
 const ri = (n) => crypto.randomInt(0, n);
 
@@ -36,9 +36,7 @@ function rid() {
   return o;
 }
 
-function u32(n) { return n >>> 0; }
-
-// Byte XOR implemented without Luau bitwise operators.
+// Arithmetic XOR for byte values; avoids Luau bitwise syntax.
 function xorByte(a, b) {
   a &= 255; b &= 255;
   let out = 0, bit = 1;
@@ -52,20 +50,28 @@ function xorByte(a, b) {
   return out;
 }
 
+function u16(n) {
+  n %= 65536;
+  if (n < 0) n += 65536;
+  return n;
+}
+
+// Small-integer stream generator: deliberately stays below the exact-integer
+// range used by Luau Number arithmetic on all supported runtimes.
+function keyedMask(seed, i, a, b) {
+  let s = u16(seed);
+  s = u16(s + u16((i + 1) * 40503));
+  s = u16(s + u16(a * 257));
+  s = u16(s + u16(b * 911));
+  s = u16((s * 25173) + 13849);
+  return s % 256;
+}
+
 function modInv(a) {
   for (let x = 1; x < 256; x++) {
     if (((a * x) % 256 + 256) % 256 === 1) return x;
   }
   throw new Error('Invalid affine key');
-}
-
-// Pure-arithmetic keyed stream generator.
-// Kept within exact integer ranges for Luau/Number compatibility.
-function keyedMask(seed, i, a, b) {
-  let s = (seed + (i + 1) * 374761393 + a * 668265263 + b * 2147483647) % 4294967296;
-  if (s < 0) s += 4294967296;
-  s = (s * 1664525 + 1013904223) % 4294967296;
-  return s % 256;
 }
 
 function decEnc(buf, a, b, seed) {
@@ -92,8 +98,7 @@ function decDec(d, a, b, seed) {
 }
 
 function hash32(buf, seed = 0) {
-  let h = (216613 + seed) % 1000003;
-  if (h < 0) h += 1000003;
+  let h = u16(21613 + seed);
   for (let i = 0; i < buf.length; i++) h = (h * 257 + buf[i] + 97) % 1000003;
   return h;
 }
@@ -178,7 +183,7 @@ function obfuscateDecimal(source, nests) {
 
     const a = 1 + 2 * ri(128);
     const b = ri(256);
-    const streamSeed = u32(crypto.randomInt(0, 0x7fffffff) ^ ri(0x7fffffff));
+    const streamSeed = ri(65536);
     const decimal = decEnc(raw, a, b, streamSeed);
 
     if (!/^\d+$/.test(decimal)) throw new Error('decimal payload violation');
@@ -223,7 +228,7 @@ function obfuscate(source) {
         'no-bitwise-loader-syntax',
         'runtime-compatibility-checks',
         'double-nest',
-        'runtime-key-derivation',
+        'small-integer-runtime-key-derivation',
         'luau-roblox-stable',
       ],
       verified: true,
