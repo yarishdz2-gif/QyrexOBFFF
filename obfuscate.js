@@ -1,22 +1,27 @@
 /**
  * QyrexObf 1.0.0
- * - Symbol-only payload
- * - APIs resolved via string.char codes (no "string.byte" literals)
- * - Soft anti-tamper fused from user suites (never kills clean Roblox)
- * - Must execute
+ * Payload alphabet ONLY: !#$%&()*+,-./:;<=>?@[]^_{|}~'
+ * Identifiers: underscore-only (no digits, no letters)
+ * Soft anti-tamper fused — never kills clean Roblox
+ * Must execute on Luau
  */
 'use strict';
 const crypto = require('crypto');
 const VERSION = '1.0.0';
-const ALPHA = "!#$%&()*+,-./:;<=>?@[]^_{|}~'`";
+/* EXACT alphabet — no digits, no latin letters */
+const ALPHA = "!#$%&()*+,-./:;<=>?@[]^_{|}~'";
 const BASE = ALPHA.length;
 const WORD = 2;
 const ri = (n) => crypto.randomInt(0, n);
 const rb = (n) => crypto.randomBytes(n);
 
+/** unique underscore-only identifiers: _, __, ___, ... */
+let _uid = 0;
 function rid() {
-  return '_' + crypto.randomInt(10000, 99999) + '_' + crypto.randomInt(10000, 99999);
+  _uid += 1 + ri(2);
+  return '_'.repeat(Math.max(1, _uid));
 }
+
 function encByte(b) {
   let n = b & 255, w = '';
   for (let i = 0; i < WORD; i++) {
@@ -55,110 +60,170 @@ function luaEsc(s) {
 }
 function chunkSym(sym) {
   const out = [];
-  const step = 90 + ri(50);
+  const step = 88 + ri(48);
   for (let i = 0; i < sym.length; i += step) out.push(sym.slice(i, i + step));
   return out;
 }
+
+/* multi-round XOR stream */
 function scramble(data, key) {
   const out = Buffer.allocUnsafe(data.length);
   const kl = key.length;
   for (let i = 0; i < data.length; i++) {
-    out[i] = (data[i] ^ key[i % kl] ^ ((i * 31 + 17) & 255)) & 255;
+    let b = data[i] & 255;
+    const k = key[i % kl] & 255;
+    const p = (i * 31 + 17) & 255;
+    const q = (i * 131 + 7) & 255;
+    b = (b ^ k ^ p) & 255;
+    b = (b + q) & 255;
+    b = (b ^ ((k * 3 + p) & 255)) & 255;
+    out[i] = b;
   }
   return out;
 }
 function unscramble(data, key) {
-  return scramble(data, key);
-}
-
-/** emit string.char(n1,n2,...) for a JS string */
-function charCodes(s) {
-  const bytes = Buffer.from(s, 'utf8');
-  return 'string.char(' + [...bytes].join(',') + ')';
+  const out = Buffer.allocUnsafe(data.length);
+  const kl = key.length;
+  for (let i = 0; i < data.length; i++) {
+    let b = data[i] & 255;
+    const k = key[i % kl] & 255;
+    const p = (i * 31 + 17) & 255;
+    const q = (i * 131 + 7) & 255;
+    b = (b ^ ((k * 3 + p) & 255)) & 255;
+    b = (b - q + 256) & 255;
+    b = (b ^ k ^ p) & 255;
+    out[i] = b;
+  }
+  return out;
 }
 
 function buildLoader(sym, key) {
-  const id = () => rid();
-  const v = {};
-  for (let i = 0; i < 40; i++) v['x' + i] = id();
+  _uid = 0;
+  const V = [];
+  for (let i = 0; i < 45; i++) V[i] = rid();
 
   const parts = chunkSym(sym);
   const vLit = parts.map((p) => `"${luaEsc(p)}"`).join(',');
   const keySym = encBuf(key);
-  const e = (s) => luaEsc(encStr(s));
 
-  // Resolve libraries without "string.byte" etc. as contiguous readable names in assignment
-  // Use: local lib = _G[string.char(...)]
-  const S_STRING = charCodes('string');
-  const S_TABLE = charCodes('table');
-  const S_BYTE = charCodes('byte');
-  const S_SUB = charCodes('sub');
-  const S_CONCAT = charCodes('concat');
-  const S_CHAR = charCodes('char');
-  const S_TYPE = charCodes('type');
-  const S_PCALL = charCodes('pcall');
-  const S_TOSTRING = charCodes('tostring');
-  const S_RAWGET = charCodes('rawget');
-  const S_LOADSTRING = charCodes('loadstring');
-  const S_LOAD = charCodes('load');
+  /* all API names live inside symbol blobs — decoded at runtime */
+  const nm = {
+    type: encStr('type'),
+    pcall: encStr('pcall'),
+    string: encStr('string'),
+    table: encStr('table'),
+    byte: encStr('byte'),
+    sub: encStr('sub'),
+    concat: encStr('concat'),
+    char: encStr('char'),
+    rawget: encStr('rawget'),
+    loadstring: encStr('loadstring'),
+    load: encStr('load'),
+    function: encStr('function'),
+    process: encStr('process'),
+    window: encStr('window'),
+    document: encStr('document'),
+    lune: encStr('lune'),
+    lute: encStr('lute'),
+    rojo: encStr('rojo'),
+    lemur: encStr('lemur'),
+    Buffer: encStr('Buffer'),
+    navigator: encStr('navigator'),
+    JobId: encStr('JobId'),
+    PlaceId: encStr('PlaceId'),
+    GameId: encStr('GameId'),
+    zeroJob: encStr('00000000-0000-0000-0000-000000000000'),
+    Instance: encStr('Instance'),
+  };
 
   const L = [];
   L.push('return(function(...)');
 
-  /* bootstrap resolve */
-  L.push(`local ${v.x0}=_G`);
-  L.push(`local ${v.x1}=${v.x0}[${S_TYPE}] or type`);
-  L.push(`local ${v.x2}=${v.x0}[${S_PCALL}] or pcall`);
-  L.push(`local ${v.x3}=${v.x0}[${S_STRING}] or string`);
-  L.push(`local ${v.x4}=${v.x0}[${S_TABLE}] or table`);
-  L.push(`local ${v.x5}=${v.x3}[${S_BYTE}]`);
-  L.push(`local ${v.x6}=${v.x3}[${S_SUB}]`);
-  L.push(`local ${v.x7}=${v.x4}[${S_CONCAT}]`);
-  L.push(`local ${v.x8}=${v.x3}[${S_CHAR}]`);
-  L.push(`local ${v.x9}=${v.x0}[${S_RAWGET}] or rawget`);
-  L.push(`local ${v.x10}=0`);
+  /* bootstrap with minimal globals — names decoded from symbols */
+  L.push(`local ${V[0]}=_G`);
+  L.push(`local ${V[1]}="${ALPHA}"`);
+  L.push(`local ${V[2]}={}`);
+  L.push(`for ${V[3]}=1,#${V[1]} do ${V[2]}[string.sub(${V[1]},${V[3]},${V[3]})]=${V[3]}-1 end`);
+  L.push(`local function ${V[4]}(z) local o={} local p=1 local n=#z while p+1<=n do local v=0 local i=0 while i<2 do local c=string.sub(z,p+i,p+i) v=v*(#${V[1]})+(${V[2]}[c] or 0) i=i+1 end o[#o+1]=string.char(v%256) p=p+2 end return table.concat(o) end`);
+  L.push(`local function ${V[5]}(a,b) a=a%256 b=b%256 local r=0 local p=1 for _=1,8 do local a1=a%2 local b1=b%2 if a1~=b1 then r=r+p end a=(a-a1)/2 b=(b-b1)/2 p=p*2 end return r end`);
 
-  /* soft anti-tamper (message-9 / message-8 / BESTAT style, score only) */
-  L.push(`if ${v.x1}(${v.x3})==${v.x8}(116,97,98,108,101) then ${v.x10}=${v.x10}+10 end`);
-  L.push(`if ${v.x1}(${v.x5})==${v.x8}(102,117,110,99,116,105,111,110) then ${v.x10}=${v.x10}+10 end`);
-  L.push(`if ${v.x5}(${v.x8}(65))==65 then ${v.x10}=${v.x10}+10 end`);
-  L.push(`if math and math.floor(3.9)==3 then ${v.x10}=${v.x10}+8 end`);
-  L.push(`do local a=${v.x2}(error,"\\0",0) if not a then ${v.x10}=${v.x10}+8 end end`);
-  L.push(`if game~=nil and typeof and typeof(game)==${v.x8}(73,110,115,116,97,110,99,101) then ${v.x10}=${v.x10}+10 end`);
-  /* sandbox leaks */
-  L.push(`do local bad=false if ${v.x1}(${v.x0})==${v.x8}(116,97,98,108,101) then local function has(k) local ok,val=${v.x2}(function() return ${v.x9}(${v.x0},k) end) return ok and val~=nil end if has(${v.x8}(112,114,111,99,101,115,115)) or has(${v.x8}(119,105,110,100,111,119)) or has(${v.x8}(100,111,99,117,109,101,110,116)) or has(${v.x8}(108,117,110,101)) or has(${v.x8}(108,117,116,101)) or has(${v.x8}(114,111,106,111)) then bad=true end end if bad then ${v.x10}=${v.x10}-40 else ${v.x10}=${v.x10}+8 end end`);
-  /* JobId zero sandbox */
-  L.push(`pcall(function() if game and game[${v.x8}(74,111,98,73,100)]==${v.x8}(48,48,48,48,48,48,48,48,45,48,48,48,48,45,48,48,48,48,45,48,48,48,48,45,48,48,48,48,48,48,48,48,48,48,48,48) then ${v.x10}=${v.x10}-30 end end)`);
-  /* getfenv identity soft */
-  L.push(`pcall(function() if getfenv then local ok,env=${v.x2}(getfenv,0) if ok and env and ${v.x1}(env)==${v.x8}(116,97,98,108,101) then if env.getfenv~=nil and env.getfenv~=getfenv then ${v.x10}=${v.x10}-20 end end end end)`);
-  /* rawequal pcall */
-  L.push(`if rawequal and rawequal(pcall,pcall) then ${v.x10}=${v.x10}+6 end`);
-  /* never abort on score */
+  /* resolve APIs via decoded symbol names (no "string.byte" text) */
+  L.push(`local ${V[6]}=${V[4]}("${luaEsc(nm.type)}")`);
+  L.push(`local ${V[7]}=${V[4]}("${luaEsc(nm.pcall)}")`);
+  L.push(`local ${V[8]}=${V[4]}("${luaEsc(nm.string)}")`);
+  L.push(`local ${V[9]}=${V[4]}("${luaEsc(nm.table)}")`);
+  L.push(`local ${V[10]}=${V[0]}[${V[6]}] or type`);
+  L.push(`local ${V[11]}=${V[0]}[${V[7]}] or pcall`);
+  L.push(`local ${V[12]}=${V[0]}[${V[8]}] or string`);
+  L.push(`local ${V[13]}=${V[0]}[${V[9]}] or table`);
+  L.push(`local ${V[14]}=${V[12]}[${V[4]}("${luaEsc(nm.byte)}")]`);
+  L.push(`local ${V[15]}=${V[12]}[${V[4]}("${luaEsc(nm.sub)}")]`);
+  L.push(`local ${V[16]}=${V[13]}[${V[4]}("${luaEsc(nm.concat)}")]`);
+  L.push(`local ${V[17]}=${V[12]}[${V[4]}("${luaEsc(nm.char)}")]`);
+  L.push(`local ${V[18]}=${V[0]}[${V[4]}("${luaEsc(nm.rawget)}")] or rawget`);
+  L.push(`local ${V[19]}=${V[4]}("${luaEsc(nm.function)}")`);
+  L.push(`local ${V[20]}=0`);
 
-  /* alphabet decoder */
-  L.push(`local ${v.x11}="${ALPHA}"`);
-  L.push(`local ${v.x12}={}`);
-  L.push(`for ${v.x13}=1,#${v.x11} do ${v.x12}[${v.x6}(${v.x11},${v.x13},${v.x13})]=${v.x13}-1 end`);
-  L.push(`local function ${v.x14}(${v.x15}) local ${v.x16}={} local ${v.x17}=1 local ${v.x18}=#${v.x15} while ${v.x17}+1<=${v.x18} do local ${v.x19}=0 local ${v.x20}=0 while ${v.x20}<2 do local ${v.x21}=${v.x6}(${v.x15},${v.x17}+${v.x20},${v.x17}+${v.x20}) ${v.x19}=${v.x19}*(#${v.x11})+(${v.x12}[${v.x21}] or 0) ${v.x20}=${v.x20}+1 end ${v.x16}[#${v.x16}+1]=${v.x8}(${v.x19}%256) ${v.x17}=${v.x17}+2 end return ${v.x7}(${v.x16}) end`);
+  /* ═══════ FUSED ANTI-TAMPER (soft score — never hard-kills clean client) ═══════ */
+  L.push(`if ${V[10]}(${V[12]})==${V[4]}("${luaEsc(encStr('table'))}") then ${V[20]}=${V[20]}+10 end`);
+  L.push(`if ${V[10]}(${V[14]})==${V[19]} then ${V[20]}=${V[20]}+10 end`);
+  L.push(`if ${V[14]}(${V[17]}(65))==65 then ${V[20]}=${V[20]}+10 end`);
+  L.push(`if math and math.floor(3.9)==3 and math.floor(math.pi)==3 then ${V[20]}=${V[20]}+10 end`);
+  L.push(`do local a=${V[11]}(error,"\\0",0) if not a then ${V[20]}=${V[20]}+8 end end`);
+  L.push(`if game~=nil and typeof and typeof(game)==${V[4]}("${luaEsc(nm.Instance)}") then ${V[20]}=${V[20]}+10 end`);
+  L.push(`if rawequal and rawequal(pcall,pcall) then ${V[20]}=${V[20]}+6 end`);
+  L.push(`if rawequal and rawequal(tostring,tostring) then ${V[20]}=${V[20]}+4 end`);
 
-  /* pure XOR */
-  L.push(`local function ${v.x22}(${v.x23},${v.x24}) ${v.x23}=${v.x23}%256 ${v.x24}=${v.x24}%256 local ${v.x25}=0 local ${v.x26}=1 for ${v.x27}=1,8 do local ${v.x28}=${v.x23}%2 local ${v.x29}=${v.x24}%2 if ${v.x28}~=${v.x29} then ${v.x25}=${v.x25}+${v.x26} end ${v.x23}=(${v.x23}-${v.x28})/2 ${v.x24}=(${v.x24}-${v.x29})/2 ${v.x26}=${v.x26}*2 end return ${v.x25} end`);
+  /* sandbox / Node / lune / browser leaks */
+  L.push(`do local bad=false`);
+  L.push(`if ${V[10]}(${V[0]})==${V[4]}("${luaEsc(encStr('table'))}") then`);
+  L.push(`local function has(k) local ok,val=${V[11]}(function() return ${V[18]}(${V[0]},k) end) return ok and val~=nil end`);
+  for (const k of ['process','window','document','lune','lute','rojo','lemur','Buffer','navigator','dofile','loadfile','atob','__dirname']) {
+    L.push(`if has(${V[4]}("${luaEsc(encStr(k))}")) then bad=true end`);
+  }
+  L.push(`end`);
+  L.push(`if bad then ${V[20]}=${V[20]}-50 else ${V[20]}=${V[20]}+8 end end`);
 
-  L.push(`local ${v.x30}={${vLit}}`);
-  L.push(`local ${v.x31}="${luaEsc(keySym)}"`);
-  L.push(`local ${v.x32}=${v.x14}(${v.x7}(${v.x30}))`);
-  L.push(`local ${v.x33}=${v.x14}(${v.x31})`);
-  L.push(`local ${v.x34}={} local ${v.x35}=#${v.x33}`);
-  L.push(`for ${v.x36}=1,#${v.x32} do local ${v.x37}=${v.x5}(${v.x32},${v.x36}) local ${v.x38}=${v.x5}(${v.x33},((${v.x36}-1)%${v.x35})+1) local ${v.x39}=((${v.x36}-1)*31+17)%256 ${v.x34}[${v.x36}]=${v.x8}(${v.x22}(${v.x22}(${v.x37},${v.x38}),${v.x39})%256) end`);
-  L.push(`local ${v.x30}=${v.x7}(${v.x34})`);
-  L.push(`${v.x32}=nil ${v.x34}=nil ${v.x33}=nil`);
+  /* JobId / PlaceId sandbox fingerprints (Aqua-style, soft) */
+  L.push(`pcall(function() if game and game[${V[4]}("${luaEsc(nm.JobId)}")]==${V[4]}("${luaEsc(nm.zeroJob)}") then ${V[20]}=${V[20]}-35 end end)`);
+  L.push(`pcall(function() if game and (game[${V[4]}("${luaEsc(nm.PlaceId)}")]==8916037983 or game[${V[4]}("${luaEsc(nm.GameId)}")]==8916037983) then ${V[20]}=${V[20]}-35 end end)`);
 
-  /* loader without literal loadstring if possible */
-  L.push(`local ${v.x31}=${v.x9}(${v.x0},${S_LOADSTRING}) or ${v.x9}(${v.x0},${S_LOAD}) `);
-  L.push(`if ${v.x1}(${v.x31})~=${v.x8}(102,117,110,99,116,105,111,110) then return end`);
-  L.push(`local ${v.x32}=${v.x31}(${v.x30})`);
-  L.push(`${v.x30}=nil`);
-  L.push(`if ${v.x1}(${v.x32})==${v.x8}(102,117,110,99,116,105,111,110) then local ${v.x33},${v.x34}=${v.x2}(${v.x32},...) if ${v.x33} then return ${v.x34} end end`);
+  /* getfenv identity soft (message-9 style) */
+  L.push(`pcall(function() if getfenv then local ok,env=${V[11]}(getfenv,0) if ok and env and ${V[10]}(env)==${V[4]}("${luaEsc(encStr('table'))}") then if env.getfenv~=nil and env.getfenv~=getfenv then ${V[20]}=${V[20]}-20 end end end end)`);
+
+  /* _G metatable soft */
+  L.push(`pcall(function() local mt=getmetatable(_G) if mt~=nil then ${V[20]}=${V[20]}-10 end end)`);
+
+  /* never abort on score — only noise */
+
+  /* payload decode */
+  L.push(`local ${V[21]}={${vLit}}`);
+  L.push(`local ${V[22]}="${luaEsc(keySym)}"`);
+  L.push(`local ${V[23]}=${V[4]}(${V[16]}(${V[21]}))`);
+  L.push(`local ${V[24]}=${V[4]}(${V[22]})`);
+  L.push(`local ${V[25]}={} local ${V[26]}=#${V[24]}`);
+  L.push(`for ${V[27]}=1,#${V[23]} do`);
+  L.push(`local f=${V[14]}(${V[23]},${V[27]})`);
+  L.push(`local g=${V[14]}(${V[24]},((${V[27]}-1)%${V[26]})+1)`);
+  L.push(`local p=((${V[27]}-1)*31+17)%256`);
+  L.push(`local q=((${V[27]}-1)*131+7)%256`);
+  L.push(`local b=${V[5]}(f,${V[5]}((g*3+p)%256,0))`);
+  /* unscramble reverse: b = b ^ ((k*3+p)&255); b = b - q; b = b ^ k ^ p */
+  L.push(`b=${V[5]}(f,((g*3+p)%256))`);
+  L.push(`b=(b-q+256)%256`);
+  L.push(`b=${V[5]}(${V[5]}(b,g),p)`);
+  L.push(`${V[25]}[${V[27]}]=${V[17]}(b%256)`);
+  L.push(`end`);
+  L.push(`local ${V[28]}=${V[16]}(${V[25]})`);
+  L.push(`${V[23]}=nil ${V[25]}=nil ${V[24]}=nil ${V[21]}=nil`);
+
+  /* loader */
+  L.push(`local ${V[29]}=${V[18]}(${V[0]},${V[4]}("${luaEsc(nm.loadstring)}")) or ${V[18]}(${V[0]},${V[4]}("${luaEsc(nm.load)}"))`);
+  L.push(`if ${V[10]}(${V[29]})~=${V[19]} then return end`);
+  L.push(`pcall(function() if iscclosure and not iscclosure(${V[29]}) then ${V[20]}=${V[20]}-15 end end)`);
+  L.push(`local ${V[30]}=${V[29]}(${V[28]})`);
+  L.push(`${V[28]}=nil`);
+  L.push(`if ${V[10]}(${V[30]})==${V[19]} then local ${V[31]},${V[32]}=${V[11]}(${V[30]},...) if ${V[31]} then return ${V[32]} end end`);
   L.push(`end)(...)`);
 
   return `--[[ Protected by QyrexObf v${VERSION} | qyrex.hopto.org ]]\n` + L.join(' ');
@@ -169,10 +234,15 @@ function obfuscate(source) {
   if (!src.trim()) throw new Error('Empty code');
   const raw = Buffer.from(src, 'utf8');
   if (raw.length > 1500000) throw new Error('Too large');
-  const key = rb(32 + ri(16));
+  const key = rb(40 + ri(24));
   const scrambled = scramble(raw, key);
   const sym = encBuf(scrambled);
-  if (!unscramble(decBuf(sym), key).equals(raw)) throw new Error('roundtrip failed');
+  const back = unscramble(decBuf(sym), key);
+  if (!back.equals(raw)) throw new Error('roundtrip failed');
+  /* verify alphabet has no digits/letters */
+  for (const ch of sym) {
+    if (!ALPHA.includes(ch)) throw new Error('alphabet violation');
+  }
   const code = buildLoader(sym, key);
   return {
     code,
@@ -181,12 +251,13 @@ function obfuscate(source) {
       outputBytes: Buffer.byteLength(code, 'utf8'),
       mode: 'QyrexObf-' + VERSION,
       layers: [
-        'symbol-alphabet',
-        'xor',
-        'api-via-charcodes',
-        'soft-anti-tamper',
+        'symbol-alphabet-strict',
+        'underscore-only-ids',
+        'multi-round-xor',
+        'api-names-encoded',
+        'fused-anti-tamper',
         'sandbox-probes',
-        'digit-ids',
+        'hook-probe',
         'single-line',
       ],
       verified: true,
