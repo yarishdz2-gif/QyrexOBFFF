@@ -1,4 +1,4 @@
-```js
+
 /**
  * QyrexObf 1.2.0
  * Roblox/Luau compatible numeric payload.
