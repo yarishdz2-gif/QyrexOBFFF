@@ -7,9 +7,15 @@
 'use strict';
 
 const crypto = require('crypto');
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
 const MAX_SOURCE = 1_500_000;
 const BLOCK_SIZE = 29;
+
+// Segunda capa: cada dígito decimal se representa con uno de estos 10 símbolos.
+// No aparecen 0-9 en el payload empaquetado.
+const DIGIT_SYMBOLS = '°!\"#$%&/()';
+const DIGIT_MAP = Object.fromEntries([...DIGIT_SYMBOLS].map((ch, i) => [ch, String(i)]));
+const DIGIT_REVERSE = Array.from(DIGIT_SYMBOLS);
 
 const ri = (n) => crypto.randomInt(0, n);
 const rb = (n) => crypto.randomBytes(n);
@@ -58,7 +64,26 @@ function modInverse256(a) {
   throw new Error('Invalid numeric key');
 }
 
-function chunkDigits(s) {
+function symbolEncodeDigits(decimal) {
+  let out = '';
+  for (const ch of decimal) {
+    if (ch < '0' || ch > '9') throw new Error('non-decimal payload');
+    out += DIGIT_REVERSE[ch.charCodeAt(0) - 48];
+  }
+  return out;
+}
+
+function symbolDecodeDigits(symbols) {
+  let out = '';
+  for (const ch of symbols) {
+    const digit = DIGIT_MAP[ch];
+    if (digit === undefined) throw new Error('invalid symbol payload');
+    out += digit;
+  }
+  return out;
+}
+
+function chunkSymbols(s) {
   const out = [];
   const step = BLOCK_SIZE * (1 + ri(5));
   for (let i = 0; i < s.length; i += step) out.push(s.slice(i, i + step));
@@ -69,89 +94,98 @@ function luaQuote(s) {
   return JSON.stringify(String(s));
 }
 
-function buildLoader(decimalPayload, a, b, expectedHash, sourceLen) {
+function buildLoader(symbolPayload, a, b, expectedHash, sourceLen) {
   uid = 0;
-  const V = Array.from({ length: 49 }, rid);
-  const parts = chunkDigits(decimalPayload);
+  const V = Array.from({ length: 31 }, rid);
+  const parts = chunkSymbols(symbolPayload);
   const payloadTable = parts.map((p) => luaQuote(p)).join(',');
+  const alphaLua = luaQuote(DIGIT_SYMBOLS);
 
   const L = [];
-  L.push('--[[ QyrexObf 2.0.0 | decimal payload | arithmetic numeric transform ]]');
+  L.push('-- QyrexObf by ikgmonxr qyrex.hopto.org 1.0.2');
   L.push(`return(function(...)`);
 
-  // Numeric-only payload is kept in decimal strings. Everything outside this
-  // payload is executable Luau syntax, which necessarily needs keywords/symbols.
   L.push(`local ${V[0]}=_G`);
   L.push(`local ${V[1]}={${payloadTable}}`);
-  L.push(`local ${V[2]}=${sourceLen}`);
-  L.push(`local ${V[3]}=${a}`);
-  L.push(`local ${V[4]}=${b}`);
-  L.push(`local ${V[5]}=${expectedHash}`);
+  L.push(`local ${V[2]}=${alphaLua}`);
+  L.push(`local ${V[3]}=${sourceLen}`);
+  L.push(`local ${V[4]}=${a}`);
+  L.push(`local ${V[5]}=${b}`);
+  L.push(`local ${V[6]}=${expectedHash}`);
 
-  // Resolve standard functions without embedding the source payload in cleartext.
-  L.push(`local ${V[6]}=string`);
-  L.push(`local ${V[7]}=table`);
-  L.push(`local ${V[8]}=math`);
-  L.push(`local ${V[9]}=pcall`);
-  L.push(`local ${V[10]}=type`);
-  L.push(`local ${V[11]}=loadstring or load`);
-  L.push(`local ${V[12]}=${V[6]}.sub`);
-  L.push(`local ${V[13]}=${V[6]}.char`);
-  L.push(`local ${V[14]}=${V[7]}.concat`);
+  // Build symbol -> digit lookup table. The packed payload contains no 0-9.
+  L.push(`local ${V[7]}={}`);
+  L.push(`for ${V[8]}=1,#${V[2]} do ${V[7]}[string.sub(${V[2]},${V[8]},${V[8]})]=string.char(48+${V[8]}-1) end`);
 
-  // Deterministic decimal parser.
-  L.push(`local function ${V[15]}(s)`);
-  L.push(`  local o={} local j=1 local p=1 local n=#s`);
-  L.push(`  while p<=n do`);
-  L.push(`    local y=(${V[12]}(s,p,p+2)+0)`);
-  L.push(`    local x=0`);
-  L.push(`    local inv=1`);
-  L.push(`    while (((${V[3]}*inv)%256)~=1) do inv=inv+2 end`);
-  L.push(`    x=(((y-${V[4]}-((j-1)%251))%256)+256)%256`);
-  L.push(`    x=(x*inv)%256`);
-  L.push(`    o[j]=${V[13]}(x)`);
-  L.push(`    j=j+1 p=p+3`);
+  // Layer 1: symbols -> decimal digits.
+  L.push(`local function ${V[9]}(s)`);
+  L.push(`  local o={}`);
+  L.push(`  for ${V[10]}=1,#s do`);
+  L.push(`    local d=${V[7]}[string.sub(s,${V[10]},${V[10]})]`);
+  L.push(`    if d==nil then return nil end`);
+  L.push(`    o[${V[10]}]=d`);
   L.push(`  end`);
-  L.push(`  return ${V[14]}(o)`);
+  L.push(`  return table.concat(o)`);
   L.push(`end`);
 
-  // Lightweight 32-bit integrity check using arithmetic only.
-  L.push(`local function ${V[16]}(s)`);
+  // Layer 2: decimal digits -> original bytes.
+  L.push(`local function ${V[11]}(s)`);
+  L.push(`  local o={} local j=1 local p=1 local n=#s`);
+  L.push(`  local inv=1 while (((${V[4]}*inv)%256)~=1) do inv=inv+2 end`);
+  L.push(`  while p<=n do`);
+  L.push(`    local y=(string.sub(s,p,p+2)+0)`);
+  L.push(`    local x=(((y-${V[5]}-((j-1)%251))%256)+256)%256`);
+  L.push(`    x=(x*inv)%256`);
+  L.push(`    o[j]=string.char(x)`);
+  L.push(`    j=j+1 p=p+3`);
+  L.push(`  end`);
+  L.push(`  return table.concat(o)`);
+  L.push(`end`);
+
+  // Arithmetic integrity check.
+  L.push(`local function ${V[12]}(s)`);
   L.push(`  local h=2166136261`);
-  L.push(`  for i=1,#s do`);
-  L.push(`    local c=${V[6]}.byte(s,i)`);
+  L.push(`  for ${V[13]}=1,#s do`);
+  L.push(`    local c=string.byte(s,${V[13]})`);
   L.push(`    h=(h*16777619+c+97)%4294967296`);
   L.push(`  end`);
   L.push(`  return h`);
   L.push(`end`);
 
-  // Environment / hook sanity checks. These are intentionally soft: normal Roblox/clean Luau execution is not blocked.
-  L.push(`local ${V[17]}=0`);
-  L.push(`pcall(function() if ${V[10]}(${V[6]})=='table' then ${V[17]}=${V[17]}+1 end end)`);
-  L.push(`pcall(function() if ${V[10]}(${V[12]})=='function' then ${V[17]}=${V[17]}+1 end end)`);
-  L.push(`pcall(function() if ${V[10]}(${V[13]})=='function' then ${V[17]}=${V[17]}+1 end end)`);
-  L.push(`pcall(function() if game and typeof and typeof(game)=='Instance' then ${V[17]}=${V[17]}+2 end end)`);
-  L.push(`pcall(function() if _G and getmetatable and getmetatable(_G)~=nil then ${V[17]}=${V[17]}-1 end end)`);
-  L.push(`pcall(function() if hookfunction or replaceclosure or newcclosure then ${V[17]}=${V[17]}-2 end end)`);
-  L.push(`if ${V[17]}<2 then return end`);
+  // Soft environment / hook sanity checks.
+  L.push(`local ${V[14]}=0`);
+  L.push(`pcall(function() if type(string)=='table' then ${V[14]}=${V[14]}+1 end end)`);
+  L.push(`pcall(function() if type(string.sub)=='function' then ${V[14]}=${V[14]}+1 end end)`);
+  L.push(`pcall(function() if type(string.char)=='function' then ${V[14]}=${V[14]}+1 end end)`);
+  L.push(`pcall(function() if game and typeof and typeof(game)=='Instance' then ${V[14]}=${V[14]}+2 end end)`);
+  L.push(`pcall(function() if _G and getmetatable and getmetatable(_G)~=nil then ${V[14]}=${V[14]}-1 end end)`);
+  L.push(`pcall(function() if hookfunction or replaceclosure or newcclosure then ${V[14]}=${V[14]}-2 end end)`);
+  L.push(`if ${V[14]}<2 then return end`);
 
-  // Reassemble + decode. The payload itself contains digits only.
-  L.push(`local ${V[18]}=${V[14]}(${V[1]})`);
-  L.push(`if #${V[18]}~=${V[2]}*3 then return end`);
-  L.push(`local ${V[19]}=${V[15]}(${V[18]})`);
-  L.push(`if #${V[19]}~=${V[2]} then return end`);
-  L.push(`if ${V[16]}(${V[19]})~=${V[5]} then return end`);
+  // Symbols -> decimal.
+  L.push(`local ${V[15]}={}`);
+  L.push(`for ${V[16]}=1,#${V[1]} do`);
+  L.push(`  local q=${V[9]}(${V[1]}[${V[16]}])`);
+  L.push(`  if not q then return end`);
+  L.push(`  ${V[15]}[${V[16]}]=q`);
+  L.push(`end`);
+  L.push(`local ${V[17]}=table.concat(${V[15]})`);
+  L.push(`${V[15]}=nil ${V[1]}=nil`);
 
-  // Clear packed data before loading the recovered source.
-  L.push(`${V[1]}=nil ${V[18]}=nil`);
+  // Decimal -> original bytes and verify before compiling.
+  L.push(`if #${V[17]}~=${V[3]}*3 then return end`);
+  L.push(`local ${V[18]}=${V[11]}(${V[17]})`);
+  L.push(`${V[17]}=nil`);
+  L.push(`if #${V[18]}~=${V[3]} then return end`);
+  L.push(`if ${V[12]}(${V[18]})~=${V[6]} then return end`);
+
+  L.push(`local ${V[19]}=loadstring or load`);
+  L.push(`if type(${V[19]})~='function' then return end`);
+  L.push(`local ${V[20]},${V[21]}=pcall(${V[19]},${V[18]})`);
+  L.push(`${V[18]}=nil`);
+  L.push(`if not ${V[20]} or type(${V[21]})~='function' then return end`);
   L.push(`collectgarbage('collect')`);
-
-  L.push(`local ${V[20]}=${V[11]}`);
-  L.push(`if ${V[10]}(${V[20]})~='function' then return end`);
-  L.push(`local ${V[21]},${V[22]}=${V[9]}(${V[20]},${V[19]})`);
-  L.push(`${V[19]}=nil`);
-  L.push(`if not ${V[21]} or ${V[10]}(${V[22]})~='function' then return end`);
-  L.push(`return ${V[22]}(...)`);
+  L.push(`return ${V[21]}(...)`);
   L.push(`end)(...)`);
 
   return L.join('\n');
@@ -168,14 +202,16 @@ function obfuscate(source) {
   const a = odd[ri(odd.length)];
   const b = ri(256);
   const decimal = decimalEncode(raw, a, b);
-  const back = decimalDecode(decimal, a, b);
+  const symbolized = symbolEncodeDigits(decimal);
+  const back = decimalDecode(symbolDecodeDigits(symbolized), a, b);
   if (!back.equals(raw)) throw new Error('numeric roundtrip failed');
 
   // Hard verification that the payload alphabet really is digits only.
   if (!/^\d+$/.test(decimal)) throw new Error('decimal payload violation');
+  if (/[0-9]/.test(symbolized)) throw new Error('symbol payload contains decimal digits');
 
   const expectedHash = rollingHash32(raw);
-  const code = buildLoader(decimal, a, b, expectedHash, raw.length);
+  const code = buildLoader(symbolized, a, b, expectedHash, raw.length);
 
   return {
     code,
@@ -184,7 +220,8 @@ function obfuscate(source) {
       outputBytes: Buffer.byteLength(code, 'utf8'),
       mode: `QyrexObf-${VERSION}`,
       layers: [
-        'decimal-digits-only-payload',
+        'symbolized-decimal-payload',
+        'decimal-digits-after-symbol-decoding',
         'affine-byte-transform',
         'numeric-integrity-check',
         'environment-sanity-checks',
@@ -192,7 +229,8 @@ function obfuscate(source) {
         'randomized-layout'
       ],
       verified: true,
-      payloadAlphabet: '0123456789'
+      payloadAlphabet: DIGIT_SYMBOLS,
+      decimalLayer: true
     }
   };
 }

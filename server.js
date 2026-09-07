@@ -9,7 +9,7 @@ const { obfuscate } = require('./obfuscate');
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
 const DATA_DIR = path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'users.json');
 const SESSION_TTL = 1000 * 60 * 60 * 24 * 7;
