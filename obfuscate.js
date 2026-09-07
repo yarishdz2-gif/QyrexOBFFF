@@ -1,267 +1,199 @@
 /**
- * QyrexObf 1.0.0
- * Payload alphabet ONLY: !#$%&()*+,-./:;<=>?@[]^_{|}~'
- * Identifiers: underscore-only (no digits, no letters)
- * Soft anti-tamper fused — never kills clean Roblox
- * Must execute on Luau
+ * QyrexObf 2.0.0
+ * Payload: DECIMAL DIGITS ONLY (0-9)
+ * Numeric transform only. Decimal payload.
+ * Luau-compatible loader with numeric decoding + integrity checks.
  */
 'use strict';
+
 const crypto = require('crypto');
-const VERSION = '1.0.0';
-/* EXACT alphabet — no digits, no latin letters */
-const ALPHA = "!#$%&()*+,-./:;<=>?@[]^_{|}~'";
-const BASE = ALPHA.length;
-const WORD = 2;
+const VERSION = '2.0.0';
+const MAX_SOURCE = 1_500_000;
+const BLOCK_SIZE = 29;
+
 const ri = (n) => crypto.randomInt(0, n);
 const rb = (n) => crypto.randomBytes(n);
 
-/** unique underscore-only identifiers: _, __, ___, ... */
-let _uid = 0;
+let uid = 0;
 function rid() {
-  _uid += 1 + ri(2);
-  return '_'.repeat(Math.max(1, _uid));
+  uid += 1 + ri(3);
+  return '_'.repeat(uid);
 }
 
-function encByte(b) {
-  let n = b & 255, w = '';
-  for (let i = 0; i < WORD; i++) {
-    w = ALPHA[n % BASE] + w;
-    n = (n / BASE) | 0;
+function rollingHash32(buf) {
+  let h = 2166136261;
+  for (const b of buf) {
+    h = (Math.imul(h, 16777619) + b + 97) >>> 0;
   }
-  return w;
+  return h >>> 0;
 }
-function encBuf(buf) {
-  let s = '';
-  for (let i = 0; i < buf.length; i++) s += encByte(buf[i]);
-  return s;
-}
-function encStr(s) {
-  return encBuf(Buffer.from(String(s), 'utf8'));
-}
-function decBuf(sym) {
-  const map = Object.create(null);
-  for (let i = 0; i < BASE; i++) map[ALPHA[i]] = i;
-  const out = Buffer.alloc((sym.length / WORD) | 0);
-  let j = 0;
-  for (let pos = 0; pos + WORD <= sym.length; pos += WORD) {
-    let n = 0;
-    for (let i = 0; i < WORD; i++) n = n * BASE + (map[sym[pos + i]] || 0);
-    out[j++] = n & 255;
-  }
-  return out.subarray(0, j);
-}
-function luaEsc(s) {
-  return String(s)
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/\r/g, '\\r')
-    .replace(/\n/g, '\\n')
-    .replace(/\0/g, '\\0');
-}
-function chunkSym(sym) {
+
+function decimalEncode(buffer, a, b) {
   const out = [];
-  const step = 88 + ri(48);
-  for (let i = 0; i < sym.length; i += step) out.push(sym.slice(i, i + step));
-  return out;
+  for (let i = 0; i < buffer.length; i++) {
+    const x = buffer[i];
+    // Odd a is invertible modulo 256. Arithmetic transform only.
+    const y = ((Math.imul(a, x) + b + (i % 251)) % 256 + 256) % 256;
+    out.push(String(y).padStart(3, '0'));
+  }
+  return out.join('');
 }
 
-/* multi-round XOR stream */
-function scramble(data, key) {
-  const out = Buffer.allocUnsafe(data.length);
-  const kl = key.length;
-  for (let i = 0; i < data.length; i++) {
-    let b = data[i] & 255;
-    const k = key[i % kl] & 255;
-    const p = (i * 31 + 17) & 255;
-    const q = (i * 131 + 7) & 255;
-    b = (b ^ k ^ p) & 255;
-    b = (b + q) & 255;
-    b = (b ^ ((k * 3 + p) & 255)) & 255;
-    out[i] = b;
-  }
-  return out;
-}
-function unscramble(data, key) {
-  const out = Buffer.allocUnsafe(data.length);
-  const kl = key.length;
-  for (let i = 0; i < data.length; i++) {
-    let b = data[i] & 255;
-    const k = key[i % kl] & 255;
-    const p = (i * 31 + 17) & 255;
-    const q = (i * 131 + 7) & 255;
-    b = (b ^ ((k * 3 + p) & 255)) & 255;
-    b = (b - q + 256) & 255;
-    b = (b ^ k ^ p) & 255;
-    out[i] = b;
+function decimalDecode(buffer, a, b) {
+  const inv = modInverse256(a);
+  const out = Buffer.alloc(buffer.length / 3);
+  for (let i = 0, j = 0; i + 2 < buffer.length; i += 3, j++) {
+    const y = Number(buffer.slice(i, i + 3));
+    const z = ((y - b - (j % 251)) % 256 + 256) % 256;
+    out[j] = ((Math.imul(inv, z) % 256) + 256) % 256;
   }
   return out;
 }
 
-function buildLoader(sym, key) {
-  _uid = 0;
-  const V = [];
-  for (let i = 0; i < 45; i++) V[i] = rid();
+function modInverse256(a) {
+  // For odd a, this small brute-force inverse is cheap and deterministic.
+  for (let x = 1; x < 256; x += 2) {
+    if (((a * x) % 256 + 256) % 256 === 1) return x;
+  }
+  throw new Error('Invalid numeric key');
+}
 
-  const parts = chunkSym(sym);
-  const vLit = parts.map((p) => `"${luaEsc(p)}"`).join(',');
-  const keySym = encBuf(key);
+function chunkDigits(s) {
+  const out = [];
+  const step = BLOCK_SIZE * (1 + ri(5));
+  for (let i = 0; i < s.length; i += step) out.push(s.slice(i, i + step));
+  return out;
+}
 
-  /* all API names live inside symbol blobs — decoded at runtime */
-  const nm = {
-    type: encStr('type'),
-    pcall: encStr('pcall'),
-    string: encStr('string'),
-    table: encStr('table'),
-    byte: encStr('byte'),
-    sub: encStr('sub'),
-    concat: encStr('concat'),
-    char: encStr('char'),
-    rawget: encStr('rawget'),
-    loadstring: encStr('loadstring'),
-    load: encStr('load'),
-    function: encStr('function'),
-    process: encStr('process'),
-    window: encStr('window'),
-    document: encStr('document'),
-    lune: encStr('lune'),
-    lute: encStr('lute'),
-    rojo: encStr('rojo'),
-    lemur: encStr('lemur'),
-    Buffer: encStr('Buffer'),
-    navigator: encStr('navigator'),
-    JobId: encStr('JobId'),
-    PlaceId: encStr('PlaceId'),
-    GameId: encStr('GameId'),
-    zeroJob: encStr('00000000-0000-0000-0000-000000000000'),
-    Instance: encStr('Instance'),
-  };
+function luaQuote(s) {
+  return JSON.stringify(String(s));
+}
+
+function buildLoader(decimalPayload, a, b, expectedHash, sourceLen) {
+  uid = 0;
+  const V = Array.from({ length: 49 }, rid);
+  const parts = chunkDigits(decimalPayload);
+  const payloadTable = parts.map((p) => luaQuote(p)).join(',');
 
   const L = [];
-  L.push('return(function(...)');
+  L.push('--[[ QyrexObf 2.0.0 | decimal payload | arithmetic numeric transform ]]');
+  L.push(`return(function(...)`);
 
-  /* bootstrap with minimal globals — names decoded from symbols */
+  // Numeric-only payload is kept in decimal strings. Everything outside this
+  // payload is executable Luau syntax, which necessarily needs keywords/symbols.
   L.push(`local ${V[0]}=_G`);
-  L.push(`local ${V[1]}="${ALPHA}"`);
-  L.push(`local ${V[2]}={}`);
-  L.push(`for ${V[3]}=1,#${V[1]} do ${V[2]}[string.sub(${V[1]},${V[3]},${V[3]})]=${V[3]}-1 end`);
-  L.push(`local function ${V[4]}(z) local o={} local p=1 local n=#z while p+1<=n do local v=0 local i=0 while i<2 do local c=string.sub(z,p+i,p+i) v=v*(#${V[1]})+(${V[2]}[c] or 0) i=i+1 end o[#o+1]=string.char(v%256) p=p+2 end return table.concat(o) end`);
-  L.push(`local function ${V[5]}(a,b) a=a%256 b=b%256 local r=0 local p=1 for _=1,8 do local a1=a%2 local b1=b%2 if a1~=b1 then r=r+p end a=(a-a1)/2 b=(b-b1)/2 p=p*2 end return r end`);
+  L.push(`local ${V[1]}={${payloadTable}}`);
+  L.push(`local ${V[2]}=${sourceLen}`);
+  L.push(`local ${V[3]}=${a}`);
+  L.push(`local ${V[4]}=${b}`);
+  L.push(`local ${V[5]}=${expectedHash}`);
 
-  /* resolve APIs via decoded symbol names (no "string.byte" text) */
-  L.push(`local ${V[6]}=${V[4]}("${luaEsc(nm.type)}")`);
-  L.push(`local ${V[7]}=${V[4]}("${luaEsc(nm.pcall)}")`);
-  L.push(`local ${V[8]}=${V[4]}("${luaEsc(nm.string)}")`);
-  L.push(`local ${V[9]}=${V[4]}("${luaEsc(nm.table)}")`);
-  L.push(`local ${V[10]}=${V[0]}[${V[6]}] or type`);
-  L.push(`local ${V[11]}=${V[0]}[${V[7]}] or pcall`);
-  L.push(`local ${V[12]}=${V[0]}[${V[8]}] or string`);
-  L.push(`local ${V[13]}=${V[0]}[${V[9]}] or table`);
-  L.push(`local ${V[14]}=${V[12]}[${V[4]}("${luaEsc(nm.byte)}")]`);
-  L.push(`local ${V[15]}=${V[12]}[${V[4]}("${luaEsc(nm.sub)}")]`);
-  L.push(`local ${V[16]}=${V[13]}[${V[4]}("${luaEsc(nm.concat)}")]`);
-  L.push(`local ${V[17]}=${V[12]}[${V[4]}("${luaEsc(nm.char)}")]`);
-  L.push(`local ${V[18]}=${V[0]}[${V[4]}("${luaEsc(nm.rawget)}")] or rawget`);
-  L.push(`local ${V[19]}=${V[4]}("${luaEsc(nm.function)}")`);
-  L.push(`local ${V[20]}=0`);
+  // Resolve standard functions without embedding the source payload in cleartext.
+  L.push(`local ${V[6]}=string`);
+  L.push(`local ${V[7]}=table`);
+  L.push(`local ${V[8]}=math`);
+  L.push(`local ${V[9]}=pcall`);
+  L.push(`local ${V[10]}=type`);
+  L.push(`local ${V[11]}=loadstring or load`);
+  L.push(`local ${V[12]}=${V[6]}.sub`);
+  L.push(`local ${V[13]}=${V[6]}.char`);
+  L.push(`local ${V[14]}=${V[7]}.concat`);
 
-  /* ═══════ FUSED ANTI-TAMPER (soft score — never hard-kills clean client) ═══════ */
-  L.push(`if ${V[10]}(${V[12]})==${V[4]}("${luaEsc(encStr('table'))}") then ${V[20]}=${V[20]}+10 end`);
-  L.push(`if ${V[10]}(${V[14]})==${V[19]} then ${V[20]}=${V[20]}+10 end`);
-  L.push(`if ${V[14]}(${V[17]}(65))==65 then ${V[20]}=${V[20]}+10 end`);
-  L.push(`if math and math.floor(3.9)==3 and math.floor(math.pi)==3 then ${V[20]}=${V[20]}+10 end`);
-  L.push(`do local a=${V[11]}(error,"\\0",0) if not a then ${V[20]}=${V[20]}+8 end end`);
-  L.push(`if game~=nil and typeof and typeof(game)==${V[4]}("${luaEsc(nm.Instance)}") then ${V[20]}=${V[20]}+10 end`);
-  L.push(`if rawequal and rawequal(pcall,pcall) then ${V[20]}=${V[20]}+6 end`);
-  L.push(`if rawequal and rawequal(tostring,tostring) then ${V[20]}=${V[20]}+4 end`);
-
-  /* sandbox / Node / lune / browser leaks */
-  L.push(`do local bad=false`);
-  L.push(`if ${V[10]}(${V[0]})==${V[4]}("${luaEsc(encStr('table'))}") then`);
-  L.push(`local function has(k) local ok,val=${V[11]}(function() return ${V[18]}(${V[0]},k) end) return ok and val~=nil end`);
-  for (const k of ['process','window','document','lune','lute','rojo','lemur','Buffer','navigator','dofile','loadfile','atob','__dirname']) {
-    L.push(`if has(${V[4]}("${luaEsc(encStr(k))}")) then bad=true end`);
-  }
+  // Deterministic decimal parser.
+  L.push(`local function ${V[15]}(s)`);
+  L.push(`  local o={} local j=1 local p=1 local n=#s`);
+  L.push(`  while p<=n do`);
+  L.push(`    local y=(${V[12]}(s,p,p+2)+0)`);
+  L.push(`    local x=0`);
+  L.push(`    local inv=1`);
+  L.push(`    while (((${V[3]}*inv)%256)~=1) do inv=inv+2 end`);
+  L.push(`    x=(((y-${V[4]}-((j-1)%251))%256)+256)%256`);
+  L.push(`    x=(x*inv)%256`);
+  L.push(`    o[j]=${V[13]}(x)`);
+  L.push(`    j=j+1 p=p+3`);
+  L.push(`  end`);
+  L.push(`  return ${V[14]}(o)`);
   L.push(`end`);
-  L.push(`if bad then ${V[20]}=${V[20]}-50 else ${V[20]}=${V[20]}+8 end end`);
 
-  /* JobId / PlaceId sandbox fingerprints (Aqua-style, soft) */
-  L.push(`pcall(function() if game and game[${V[4]}("${luaEsc(nm.JobId)}")]==${V[4]}("${luaEsc(nm.zeroJob)}") then ${V[20]}=${V[20]}-35 end end)`);
-  L.push(`pcall(function() if game and (game[${V[4]}("${luaEsc(nm.PlaceId)}")]==8916037983 or game[${V[4]}("${luaEsc(nm.GameId)}")]==8916037983) then ${V[20]}=${V[20]}-35 end end)`);
-
-  /* getfenv identity soft (message-9 style) */
-  L.push(`pcall(function() if getfenv then local ok,env=${V[11]}(getfenv,0) if ok and env and ${V[10]}(env)==${V[4]}("${luaEsc(encStr('table'))}") then if env.getfenv~=nil and env.getfenv~=getfenv then ${V[20]}=${V[20]}-20 end end end end)`);
-
-  /* _G metatable soft */
-  L.push(`pcall(function() local mt=getmetatable(_G) if mt~=nil then ${V[20]}=${V[20]}-10 end end)`);
-
-  /* never abort on score — only noise */
-
-  /* payload decode */
-  L.push(`local ${V[21]}={${vLit}}`);
-  L.push(`local ${V[22]}="${luaEsc(keySym)}"`);
-  L.push(`local ${V[23]}=${V[4]}(${V[16]}(${V[21]}))`);
-  L.push(`local ${V[24]}=${V[4]}(${V[22]})`);
-  L.push(`local ${V[25]}={} local ${V[26]}=#${V[24]}`);
-  L.push(`for ${V[27]}=1,#${V[23]} do`);
-  L.push(`local f=${V[14]}(${V[23]},${V[27]})`);
-  L.push(`local g=${V[14]}(${V[24]},((${V[27]}-1)%${V[26]})+1)`);
-  L.push(`local p=((${V[27]}-1)*31+17)%256`);
-  L.push(`local q=((${V[27]}-1)*131+7)%256`);
-  L.push(`local b=${V[5]}(f,${V[5]}((g*3+p)%256,0))`);
-  /* unscramble reverse: b = b ^ ((k*3+p)&255); b = b - q; b = b ^ k ^ p */
-  L.push(`b=${V[5]}(f,((g*3+p)%256))`);
-  L.push(`b=(b-q+256)%256`);
-  L.push(`b=${V[5]}(${V[5]}(b,g),p)`);
-  L.push(`${V[25]}[${V[27]}]=${V[17]}(b%256)`);
+  // Lightweight 32-bit integrity check using arithmetic only.
+  L.push(`local function ${V[16]}(s)`);
+  L.push(`  local h=2166136261`);
+  L.push(`  for i=1,#s do`);
+  L.push(`    local c=${V[6]}.byte(s,i)`);
+  L.push(`    h=(h*16777619+c+97)%4294967296`);
+  L.push(`  end`);
+  L.push(`  return h`);
   L.push(`end`);
-  L.push(`local ${V[28]}=${V[16]}(${V[25]})`);
-  L.push(`${V[23]}=nil ${V[25]}=nil ${V[24]}=nil ${V[21]}=nil`);
 
-  /* loader */
-  L.push(`local ${V[29]}=${V[18]}(${V[0]},${V[4]}("${luaEsc(nm.loadstring)}")) or ${V[18]}(${V[0]},${V[4]}("${luaEsc(nm.load)}"))`);
-  L.push(`if ${V[10]}(${V[29]})~=${V[19]} then return end`);
-  L.push(`pcall(function() if iscclosure and not iscclosure(${V[29]}) then ${V[20]}=${V[20]}-15 end end)`);
-  L.push(`local ${V[30]}=${V[29]}(${V[28]})`);
-  L.push(`${V[28]}=nil`);
-  L.push(`if ${V[10]}(${V[30]})==${V[19]} then local ${V[31]},${V[32]}=${V[11]}(${V[30]},...) if ${V[31]} then return ${V[32]} end end`);
+  // Environment / hook sanity checks. These are intentionally soft: normal Roblox/clean Luau execution is not blocked.
+  L.push(`local ${V[17]}=0`);
+  L.push(`pcall(function() if ${V[10]}(${V[6]})=='table' then ${V[17]}=${V[17]}+1 end end)`);
+  L.push(`pcall(function() if ${V[10]}(${V[12]})=='function' then ${V[17]}=${V[17]}+1 end end)`);
+  L.push(`pcall(function() if ${V[10]}(${V[13]})=='function' then ${V[17]}=${V[17]}+1 end end)`);
+  L.push(`pcall(function() if game and typeof and typeof(game)=='Instance' then ${V[17]}=${V[17]}+2 end end)`);
+  L.push(`pcall(function() if _G and getmetatable and getmetatable(_G)~=nil then ${V[17]}=${V[17]}-1 end end)`);
+  L.push(`pcall(function() if hookfunction or replaceclosure or newcclosure then ${V[17]}=${V[17]}-2 end end)`);
+  L.push(`if ${V[17]}<2 then return end`);
+
+  // Reassemble + decode. The payload itself contains digits only.
+  L.push(`local ${V[18]}=${V[14]}(${V[1]})`);
+  L.push(`if #${V[18]}~=${V[2]}*3 then return end`);
+  L.push(`local ${V[19]}=${V[15]}(${V[18]})`);
+  L.push(`if #${V[19]}~=${V[2]} then return end`);
+  L.push(`if ${V[16]}(${V[19]})~=${V[5]} then return end`);
+
+  // Clear packed data before loading the recovered source.
+  L.push(`${V[1]}=nil ${V[18]}=nil`);
+  L.push(`collectgarbage('collect')`);
+
+  L.push(`local ${V[20]}=${V[11]}`);
+  L.push(`if ${V[10]}(${V[20]})~='function' then return end`);
+  L.push(`local ${V[21]},${V[22]}=${V[9]}(${V[20]},${V[19]})`);
+  L.push(`${V[19]}=nil`);
+  L.push(`if not ${V[21]} or ${V[10]}(${V[22]})~='function' then return end`);
+  L.push(`return ${V[22]}(...)`);
   L.push(`end)(...)`);
 
-  return `--[[ Protected by QyrexObf v${VERSION} | qyrex.hopto.org ]]\n` + L.join(' ');
+  return L.join('\n');
 }
 
 function obfuscate(source) {
   const src = String(source ?? '');
   if (!src.trim()) throw new Error('Empty code');
   const raw = Buffer.from(src, 'utf8');
-  if (raw.length > 1500000) throw new Error('Too large');
-  const key = rb(40 + ri(24));
-  const scrambled = scramble(raw, key);
-  const sym = encBuf(scrambled);
-  const back = unscramble(decBuf(sym), key);
-  if (!back.equals(raw)) throw new Error('roundtrip failed');
-  /* verify alphabet has no digits/letters */
-  for (const ch of sym) {
-    if (!ALPHA.includes(ch)) throw new Error('alphabet violation');
-  }
-  const code = buildLoader(sym, key);
+  if (raw.length > MAX_SOURCE) throw new Error('Too large');
+
+  // Random invertible affine transform using decimal arithmetic only.
+  const odd = [1,3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33,35,37,39,41,43,45,47,49,51,53,55,57,59,61,63,65,67,69,71,73,75,77,79,81,83,85,87,89,91,93,95,97,99,101,103,105,107,109,111,113,115,117,119,121,123,125,127,129,131,133,135,137,139,141,143,145,147,149,151,153,155,157,159,161,163,165,167,169,171,173,175,177,179,181,183,185,187,189,191,193,195,197,199,201,203,205,207,209,211,213,215,217,219,221,223,225,227,229,231,233,235,237,239,241,243,245,247,249,251,253,255];
+  const a = odd[ri(odd.length)];
+  const b = ri(256);
+  const decimal = decimalEncode(raw, a, b);
+  const back = decimalDecode(decimal, a, b);
+  if (!back.equals(raw)) throw new Error('numeric roundtrip failed');
+
+  // Hard verification that the payload alphabet really is digits only.
+  if (!/^\d+$/.test(decimal)) throw new Error('decimal payload violation');
+
+  const expectedHash = rollingHash32(raw);
+  const code = buildLoader(decimal, a, b, expectedHash, raw.length);
+
   return {
     code,
     stats: {
       inputBytes: raw.length,
       outputBytes: Buffer.byteLength(code, 'utf8'),
-      mode: 'QyrexObf-' + VERSION,
+      mode: `QyrexObf-${VERSION}`,
       layers: [
-        'symbol-alphabet-strict',
-        'underscore-only-ids',
-        'multi-round-xor',
-        'api-names-encoded',
-        'fused-anti-tamper',
-        'sandbox-probes',
-        'hook-probe',
-        'single-line',
+        'decimal-digits-only-payload',
+        'affine-byte-transform',
+        'numeric-integrity-check',
+        'environment-sanity-checks',
+        'payload-wipe-after-decode',
+        'randomized-layout'
       ],
       verified: true,
-    },
+      payloadAlphabet: '0123456789'
+    }
   };
 }
 

@@ -9,6 +9,7 @@ const { obfuscate } = require('./obfuscate');
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
+const VERSION = '2.0.0';
 const DATA_DIR = path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'users.json');
 const SESSION_TTL = 1000 * 60 * 60 * 24 * 7;
@@ -19,6 +20,38 @@ const DISCORD_INVITE = 'https://discord.gg/YzCsksufde';
 
 // Needed when the site is behind Render/Cloudflare/etc.
 app.set('trust proxy', true);
+
+// Lightweight built-in hardening; no extra dependencies required.
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'same-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  if (process.env.NODE_ENV === 'production') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+  next();
+});
+
+const loginAttempts = new Map();
+const LOGIN_WINDOW = 15 * 60 * 1000;
+const MAX_LOGIN_ATTEMPTS = 30;
+function rateLimitLogin(req, res, next) {
+  const ip = requestIp(req);
+  const now = Date.now();
+  const item = loginAttempts.get(ip);
+  if (!item || now - item.resetAt > LOGIN_WINDOW) {
+    loginAttempts.set(ip, { count: 0, resetAt: now + LOGIN_WINDOW });
+    return next();
+  }
+  if (item.count >= MAX_LOGIN_ATTEMPTS) {
+    return res.status(429).json({ ok: false, error: 'Demasiados intentos. Espera unos minutos.' });
+  }
+  item.count += 1;
+  next();
+}
+
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
 function blankDb() {
@@ -122,7 +155,7 @@ function auth(req, res, next) {
   next();
 }
 
-app.get('/api/health', (req, res) => res.json({ ok: true, version: '1.0.0' }));
+app.get('/api/health', (req, res) => res.json({ ok: true, version: VERSION }));
 app.get('/api/config', (req, res) => res.json({ ok: true, priceUsdPerToken: 1, discordInvite: DISCORD_INVITE }));
 
 app.post('/api/register', (req, res) => {
@@ -183,7 +216,7 @@ app.post('/api/register', (req, res) => {
   }
 });
 
-app.post('/api/login', (req, res) => {
+app.post('/api/login', rateLimitLogin, (req, res) => {
   try {
     const login = norm(req.body?.login);
     const password = String(req.body?.password || '');
@@ -293,4 +326,4 @@ app.get('/api/purchase-destination', (req, res) => {
 });
 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
-app.listen(PORT, () => console.log(`QyrexObf VM 1.0.0 running on :${PORT}`));
+app.listen(PORT, () => console.log(`QyrexObf VM ${VERSION} running on :${PORT}`));
