@@ -1,17 +1,28 @@
+```js
 /**
  * QyrexObf 1.2.0
  * Roblox/Luau compatible numeric payload.
  * Visible payload alphabet: digits 0-9 only.
  * No Unicode payload symbols, XOR, or Base64.
  *
- * Hardening additions:
+ * Hardening:
  * - dual affine byte transform
  * - per-byte two-state key schedule
- * - keyed chunk permutation with integrity metadata
- * - independent payload checksum
- * - randomized runtime identifiers/chunking
- * - best-effort memory wiping after decode
+ * - keyed chunk permutation
+ * - payload checksum
+ * - source checksum
+ * - randomized identifiers
+ * - randomized chunking
+ * - best-effort memory wiping
+ *
+ * Luau compatibility:
+ * - simple Lua/Luau syntax
+ * - no bitwise operators
+ * - no Lua 5.3-only syntax
+ * - no unsupported standard-library dependencies
+ * - loadstring preferred
  */
+
 'use strict';
 
 const crypto = require('crypto');
@@ -23,10 +34,10 @@ const MAX_SOURCE = 1_500_000;
 const CHUNK_SIZE_MIN = 72;
 const CHUNK_SIZE_MAX = 156;
 
-const PERM_MOD = 1_000_003;
+const PERM_MOD = 1000003;
 
-const PRNG_MUL_A = 48_271;
-const PRNG_MUL_B = 69_621;
+const PRNG_MUL_A = 48271;
+const PRNG_MUL_B = 69621;
 
 const ri = (n) => crypto.randomInt(0, n);
 
@@ -56,14 +67,15 @@ const LUA_RESERVED = new Set([
 ]);
 
 function rid() {
-  const letters = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const letters =
+    'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
-  let out = '';
+  let out;
 
   do {
     out = 'q';
 
-    const len = 5 + ri(4);
+    const len = 6 + ri(4);
 
     for (let i = 0; i < len; i++) {
       out += letters[ri(letters.length)];
@@ -76,8 +88,8 @@ function rid() {
 function modInverse256(a) {
   a = ((a % 256) + 256) % 256;
 
-  for (let x = 1; x < 256; x++) {
-    if (((a * x) % 256 + 256) % 256 === 1) {
+  for (let x = 1; x <= 255; x++) {
+    if (((a * x) % 256) === 1) {
       return x;
     }
   }
@@ -117,22 +129,30 @@ function decimalEncode(
     );
 
     const mask =
-      (sa + 3 * sb + i * 29) % 256;
+      (sa + (3 * sb) + (i * 29)) % 256;
 
-    const stage1 =
+    let stage1 =
       (
-        a1 * buf[i] +
+        (a1 * buf[i]) +
         b1 +
         (i % 251) +
         mask
       ) % 256;
 
-    const stage2 =
+    if (stage1 < 0) {
+      stage1 += 256;
+    }
+
+    let stage2 =
       (
-        a2 * stage1 +
+        (a2 * stage1) +
         b2 +
         ((i * 7) % 251)
       ) % 256;
+
+    if (stage2 < 0) {
+      stage2 += 256;
+    }
 
     out += String(stage2).padStart(3, '0');
   }
@@ -149,14 +169,18 @@ function decimalDecode(
   seedA,
   seedB
 ) {
+  if (decimal.length % 3 !== 0) {
+    throw new Error(
+      'Invalid decimal payload length'
+    );
+  }
+
   const inv1 = modInverse256(a1);
   const inv2 = modInverse256(a2);
 
-  if (decimal.length % 3 !== 0) {
-    throw new Error('Invalid decimal payload length');
-  }
-
-  const out = Buffer.alloc(decimal.length / 3);
+  const out = Buffer.alloc(
+    decimal.length / 3
+  );
 
   let sa = seedA;
   let sb = seedB;
@@ -179,7 +203,7 @@ function decimalDecode(
     );
 
     const mask =
-      (sa + 3 * sb + j * 29) % 256;
+      (sa + (3 * sb) + (j * 29)) % 256;
 
     const y = Number(
       decimal.slice(i, i + 3)
@@ -190,23 +214,30 @@ function decimalDecode(
       y < 0 ||
       y > 255
     ) {
-      throw new Error('Invalid decimal byte');
+      throw new Error(
+        'Invalid decimal byte'
+      );
     }
 
-    const stage1 =
+    let t =
       (
-        inv2 *
-        (
-          (
-            y -
-            b2 -
-            ((j * 7) % 251)
-          ) % 256 +
-          256
-        ) % 256
+        y -
+        b2 -
+        ((j * 7) % 251)
       ) % 256;
 
-    const z =
+    if (t < 0) {
+      t += 256;
+    }
+
+    let stage1 =
+      (inv2 * t) % 256;
+
+    if (stage1 < 0) {
+      stage1 += 256;
+    }
+
+    let z =
       (
         stage1 -
         b1 -
@@ -214,20 +245,24 @@ function decimalDecode(
         mask
       ) % 256;
 
+    if (z < 0) {
+      z += 256;
+    }
+
     out[j] =
-      (inv1 * ((z + 256) % 256)) % 256;
+      (inv1 * z) % 256;
   }
 
   return out;
 }
 
 function rollingHash32(buf) {
-  let h = 216_613;
+  let h = 216613;
 
   for (let i = 0; i < buf.length; i++) {
     h =
       (
-        h * 257 +
+        (h * 257) +
         buf[i] +
         97
       ) % PERM_MOD;
@@ -242,7 +277,7 @@ function payloadHash(decimal) {
   for (let i = 0; i < decimal.length; i++) {
     h =
       (
-        h * 131 +
+        (h * 131) +
         decimal.charCodeAt(i) -
         48
       ) % PERM_MOD;
@@ -252,16 +287,18 @@ function payloadHash(decimal) {
 }
 
 function luaQuote(value) {
-  return JSON.stringify(String(value));
+  return JSON.stringify(
+    String(value)
+  );
 }
 
 function makeChunks(decimal) {
   const chunks = [];
 
-  let p = 0;
+  let position = 0;
 
-  while (p < decimal.length) {
-    const room =
+  while (position < decimal.length) {
+    const randomRoom =
       CHUNK_SIZE_MIN +
       ri(
         CHUNK_SIZE_MAX -
@@ -269,16 +306,22 @@ function makeChunks(decimal) {
         1
       );
 
-    const size = Math.max(
-      3,
-      room - (room % 3)
-    );
+    let size =
+      randomRoom -
+      (randomRoom % 3);
+
+    if (size < 3) {
+      size = 3;
+    }
 
     chunks.push(
-      decimal.slice(p, p + size)
+      decimal.slice(
+        position,
+        position + size
+      )
     );
 
-    p += size;
+    position += size;
   }
 
   return chunks;
@@ -287,69 +330,82 @@ function makeChunks(decimal) {
 function shuffleWithKey(arr, seed) {
   const out = arr.slice();
 
-  let s = seed;
+  let state = seed;
 
   for (
     let i = out.length - 1;
     i > 0;
     i--
   ) {
-    s = nextState(
-      s,
+    state = nextState(
+      state,
       PRNG_MUL_B,
       17 + i
     );
 
-    const j = s % (i + 1);
+    const index =
+      state % (i + 1);
 
-    [
-      out[i],
-      out[j]
-    ] = [
-      out[j],
-      out[i]
-    ];
+    const tmp = out[i];
+
+    out[i] = out[index];
+    out[index] = tmp;
   }
 
   return out;
 }
 
-/**
- * Loader builder.
- *
- * Important fix:
- * Every runtime temporary now receives its own
- * randomized identifier instead of repeatedly
- * redeclaring the same identifiers in the same
- * Lua/Luau scope.
- */
 function buildLoader(
   decimalPayload,
   params,
   expectedHash,
   sourceLen
 ) {
+  /*
+   * Dedicated identifiers.
+   *
+   * 0  payload
+   * 1  source length
+   * 2  a1
+   * 3  b1
+   * 4  a2
+   * 5  b2
+   * 6  seedA
+   * 7  seedB
+   * 8  orderSeed
+   * 9  source hash
+   * 10 payload hash
+   * 11 type
+   * 12 string
+   * 13 table
+   * 14 pcall
+   *
+   * 15+ temporary variables
+   */
+
   const V = Array.from(
-    { length: 34 },
-    rid
+    { length: 36 },
+    () => rid()
   );
 
   const originalParts =
     makeChunks(decimalPayload);
 
-  const orderSeed =
-    params.orderSeed;
-
   const indexed =
     originalParts.map(
-      (chunk, index) =>
-        `${index + 1}:${chunk}`
+      (chunk, index) => {
+        return (
+          String(index + 1) +
+          ':' +
+          chunk
+        );
+      }
     );
 
   const shuffled =
     shuffleWithKey(
       indexed,
-      orderSeed
+      params.orderSeed
     );
 
   const payloadTable =
@@ -359,29 +415,6 @@ function buildLoader(
 
   const L = [];
 
-  /*
-   * V mappings:
-   *
-   * V0  = shuffled payload table
-   * V1  = source length
-   * V2  = a1
-   * V3  = b1
-   * V4  = a2
-   * V5  = b2
-   * V6  = seedA
-   * V7  = seedB
-   * V8  = orderSeed
-   * V9  = expected source hash
-   * V10 = expected payload hash
-   *
-   * V11 = type
-   * V12 = string
-   * V13 = table
-   * V14 = pcall
-   *
-   * V15..V33 = dedicated runtime temporaries
-   */
-
   L.push(
     `-- QyrexObf by ikgmonxr qyrex.hopto.org ${VERSION}\n`
   );
@@ -389,6 +422,10 @@ function buildLoader(
   L.push(
     'return(function(...)'
   );
+
+  /*
+   * Constants / payload.
+   */
 
   L.push(
     `local ${V[0]}={${payloadTable}};`
@@ -423,7 +460,7 @@ function buildLoader(
   );
 
   L.push(
-    `local ${V[8]}=${orderSeed};`
+    `local ${V[8]}=${params.orderSeed};`
   );
 
   L.push(
@@ -433,6 +470,10 @@ function buildLoader(
   L.push(
     `local ${V[10]}=${payloadHash(decimalPayload)};`
   );
+
+  /*
+   * Native functions.
+   */
 
   L.push(
     `local ${V[11]}=type;`
@@ -452,7 +493,7 @@ function buildLoader(
 
   /*
    * Soft environment check.
-   * Kept from the original implementation.
+   * Kept intentionally.
    */
 
   L.push(
@@ -468,7 +509,15 @@ function buildLoader(
   );
 
   L.push(
-    `if ${V[16]}=='userdata' or ${V[16]}=='table' then`
+    `if ${V[16]}=='userdata' then`
+  );
+
+  L.push(
+    `${V[15]}=${V[15]}+1;`
+  );
+
+  L.push(
+    `elseif ${V[16]}=='table' then`
   );
 
   L.push(
@@ -480,7 +529,11 @@ function buildLoader(
   );
 
   L.push(
-    `if ${V[11]}(_G)=='table' then`
+    `local ${V[17]}=${V[11]}(_G);`
+  );
+
+  L.push(
+    `if ${V[17]}=='table' then`
   );
 
   L.push(
@@ -488,7 +541,7 @@ function buildLoader(
   );
 
   L.push(
-    `end`
+    `end;`
   );
 
   L.push(
@@ -496,46 +549,43 @@ function buildLoader(
   );
 
   /*
-   * Rebuild original chunk ordering.
-   *
-   * Dedicated temporaries are used here so
-   * the cryptographic/key variables remain intact.
+   * Reconstruct chunk ordering.
    */
 
   L.push(
-    `local ${V[17]}={};`
+    `local ${V[18]}={};`
   );
 
   L.push(
-    `for ${V[18]}=1,#${V[0]} do`
+    `for ${V[19]}=1,#${V[0]} do`
   );
 
   L.push(
-    `local ${V[19]},${V[20]}=${V[12]}.find(${V[0]}[${V[18]}],':',1,true);`
+    `local ${V[20]},${V[21]}=${V[12]}.find(${V[0]}[${V[19]}],':',1,true);`
   );
 
   L.push(
-    `if not ${V[19]} then return end;`
+    `if not ${V[20]} then return end;`
   );
 
   L.push(
-    `local ${V[21]}=${V[12]}.sub(${V[0]}[${V[18]}],1,${V[19]}-1);`
+    `local ${V[22]}=${V[12]}.sub(${V[0]}[${V[19]}],1,${V[20]}-1);`
   );
 
   L.push(
-    `local ${V[22]}=${V[12]}.sub(${V[0]}[${V[18]}],${V[19]}+1);`
+    `local ${V[23]}=${V[12]}.sub(${V[0]}[${V[19]}],${V[20]}+1);`
   );
 
   L.push(
-    `local ${V[23]}=tonumber(${V[21]});`
+    `local ${V[24]}=tonumber(${V[22]});`
   );
 
   L.push(
-    `if not ${V[23]} then return end;`
+    `if not ${V[24]} then return end;`
   );
 
   L.push(
-    `${V[17]}[${V[23]}]=${V[22]};`
+    `${V[18]}[${V[24]}]=${V[23]};`
   );
 
   L.push(
@@ -543,27 +593,27 @@ function buildLoader(
   );
 
   /*
-   * Discard shuffled structure.
+   * Join payload.
    */
 
   L.push(
-    `local ${V[24]}=${V[13]}.concat(${V[17]});`
+    `local ${V[25]}=${V[13]}.concat(${V[18]});`
   );
 
   L.push(
-    `${V[17]}=nil;`
+    `${V[18]}=nil;`
   );
 
   L.push(
-    `${V[0]}=${V[24]};`
+    `${V[0]}=${V[25]};`
   );
 
   L.push(
-    `${V[24]}=nil;`
+    `${V[25]}=nil;`
   );
 
   /*
-   * Validate decimal payload length.
+   * Payload length validation.
    */
 
   L.push(
@@ -571,7 +621,7 @@ function buildLoader(
   );
 
   /*
-   * Independent decimal payload checksum.
+   * Payload checksum.
    */
 
   L.push(
@@ -599,7 +649,7 @@ function buildLoader(
   );
 
   /*
-   * Modular inverses.
+   * Modular inverse #1.
    */
 
   L.push(
@@ -622,6 +672,10 @@ function buildLoader(
     `end;`
   );
 
+  /*
+   * Modular inverse #2.
+   */
+
   L.push(
     `local ${V[28]}=1;`
   );
@@ -643,10 +697,7 @@ function buildLoader(
   );
 
   /*
-   * Preserve original seeds.
-   *
-   * IMPORTANT:
-   * Decode state is kept in separate variables.
+   * Decoder state.
    */
 
   L.push(
@@ -657,10 +708,6 @@ function buildLoader(
     `local ${V[30]}=${V[7]};`
   );
 
-  /*
-   * Decode bytes.
-   */
-
   L.push(
     `local ${V[31]}={};`
   );
@@ -669,24 +716,24 @@ function buildLoader(
     `local ${V[32]}=1;`
   );
 
+  /*
+   * Decode.
+   */
+
   L.push(
     `for ${V[33]}=1,#${V[0]},3 do`
   );
 
-  /*
-   * Numeric decimal byte.
-   */
-
   L.push(
-    `local ${V[16]}=tonumber(${V[12]}.sub(${V[0]},${V[33]},${V[33]}+2));`
+    `local ${V[34]}=tonumber(${V[12]}.sub(${V[0]},${V[33]},${V[33]}+2));`
   );
 
   L.push(
-    `if not ${V[16]} or ${V[16]}<0 or ${V[16]}>255 then return end;`
+    `if not ${V[34]} or ${V[34]}<0 or ${V[34]}>255 then return end;`
   );
 
   /*
-   * Stateful schedules.
+   * Update state.
    */
 
   L.push(
@@ -698,35 +745,47 @@ function buildLoader(
   );
 
   /*
-   * Dual-state mask.
+   * Mask.
    */
 
   L.push(
-    `local ${V[15]}=(${V[29]}+3*${V[30]}+((${V[32]}-1)*29))%256;`
+    `local ${V[35]}=(${V[29]}+3*${V[30]}+((${V[32]}-1)*29))%256;`
   );
 
   /*
-   * Reverse stage 2.
+   * Undo second affine stage.
    */
 
   L.push(
-    `${V[16]}=(${V[28]}*((${V[16]}-${V[5]}-((((${V[32]}-1)*7)%251)))%256+256)%256)%256;`
+    `${V[34]}=(${V[34]}-${V[5]}-((((${V[32]}-1)*7)%251)))%256;`
+  );
+
+  L.push(
+    `if ${V[34]}<0 then ${V[34]}=${V[34]}+256 end;`
+  );
+
+  L.push(
+    `${V[34]}=(${V[28]}*${V[34]})%256;`
   );
 
   /*
-   * Reverse stage 1.
+   * Undo first affine stage.
    */
 
   L.push(
-    `${V[16]}=(((${V[16]}-${V[3]}-((${V[32]}-1)%251)-${V[15]})%256)+256)%256;`
+    `${V[34]}=(${V[34]}-${V[3]}-((${V[32]}-1)%251)-${V[35]})%256;`
+  );
+
+  L.push(
+    `if ${V[34]}<0 then ${V[34]}=${V[34]}+256 end;`
   );
 
   /*
-   * Reverse affine transform.
+   * Restore original byte.
    */
 
   L.push(
-    `${V[31]}[${V[32]}]=${V[12]}.char(((${V[27]}*${V[16]})%256));`
+    `${V[31]}[${V[32]}]=${V[12]}.char((${V[27]}*${V[34]})%256);`
   );
 
   L.push(
@@ -738,7 +797,7 @@ function buildLoader(
   );
 
   /*
-   * Recreate source.
+   * Rebuild source.
    */
 
   L.push(
@@ -750,23 +809,23 @@ function buildLoader(
   );
 
   /*
-   * Numeric/source integrity.
+   * Source checksum.
    */
 
   L.push(
-    `local ${V[17]}=216613;`
+    `local ${V[25]}=216613;`
   );
 
   L.push(
-    `for ${V[18]}=1,#${V[0]} do`
+    `for ${V[26]}=1,#${V[0]} do`
   );
 
   L.push(
-    `local ${V[19]}=${V[12]}.byte(${V[0]},${V[18]});`
+    `local ${V[34]}=${V[12]}.byte(${V[0]},${V[26]});`
   );
 
   L.push(
-    `${V[17]}=(${V[17]}*257+${V[19]}+97)%${PERM_MOD};`
+    `${V[25]}=(${V[25]}*257+${V[34]}+97)%${PERM_MOD};`
   );
 
   L.push(
@@ -774,11 +833,15 @@ function buildLoader(
   );
 
   L.push(
-    `if ${V[17]}~=${V[9]} or #${V[0]}~=${V[1]} then return end;`
+    `if ${V[25]}~=${V[9]} then return end;`
+  );
+
+  L.push(
+    `if #${V[0]}~=${V[1]} then return end;`
   );
 
   /*
-   * Best-effort wiping.
+   * Best-effort cleanup.
    */
 
   L.push(
@@ -818,31 +881,7 @@ function buildLoader(
   );
 
   L.push(
-    `${V[17]}=nil;`
-  );
-
-  L.push(
     `${V[18]}=nil;`
-  );
-
-  L.push(
-    `${V[19]}=nil;`
-  );
-
-  L.push(
-    `${V[20]}=nil;`
-  );
-
-  L.push(
-    `${V[21]}=nil;`
-  );
-
-  L.push(
-    `${V[22]}=nil;`
-  );
-
-  L.push(
-    `${V[23]}=nil;`
   );
 
   L.push(
@@ -869,36 +908,43 @@ function buildLoader(
     `${V[32]}=nil;`
   );
 
-  L.push(
-    `${V[33]}=nil;`
-  );
-
   /*
-   * Compile and execute.
+   * Compile.
+   *
+   * loadstring is preferred for Luau/executors.
+   * load is only used when available.
    */
 
   L.push(
-    `local ${V[24]}=loadstring;`
+    `local ${V[31]}=loadstring;`
   );
 
   L.push(
-    `if ${V[11]}(${V[24]})~='function' then`
+    `if ${V[11]}(${V[31]})~='function' then`
   );
 
   L.push(
-    `${V[24]}=load;`
+    `local ${V[25]}=load;`
+  );
+
+  L.push(
+    `if ${V[11]}(${V[25]})~='function' then return end;`
+  );
+
+  L.push(
+    `${V[31]}=${V[25]};`
   );
 
   L.push(
     `end;`
   );
 
-  L.push(
-    `if ${V[11]}(${V[24]})~='function' then return end;`
-  );
+  /*
+   * Compile source.
+   */
 
   L.push(
-    `local ${V[25]},${V[26]}=${V[24]}(${V[0]});`
+    `local ${V[25]},${V[26]}=${V[31]}(${V[0]});`
   );
 
   L.push(
@@ -906,51 +952,65 @@ function buildLoader(
   );
 
   L.push(
-    `if not ${V[25]} or ${V[11]}(${V[26]})~='function' then return end;`
+    `${V[31]}=nil;`
+  );
+
+  /*
+   * Stop silently on compilation error.
+   */
+
+  L.push(
+    `if ${V[11]}(${V[25]})~='function' then return end;`
+  );
+
+  /*
+   * Execute.
+   */
+
+  L.push(
+    `return ${V[25]}(...);`
   );
 
   L.push(
-    `return ${V[26]}(...);`
-  );
-
-  L.push(
-    `end)(...)`
+    'end)(...)'
   );
 
   return L.join('');
 }
 
 function obfuscate(source) {
-  const src = String(source ?? '');
+  const src =
+    String(source ?? '');
 
   if (!src.trim()) {
-    throw new Error('Empty code');
+    throw new Error(
+      'Empty code'
+    );
   }
 
   const raw =
-    Buffer.from(src, 'utf8');
+    Buffer.from(
+      src,
+      'utf8'
+    );
 
   if (raw.length > MAX_SOURCE) {
-    throw new Error('Too large');
+    throw new Error(
+      'Too large'
+    );
   }
 
+  /*
+   * Odd numbers only so that an inverse
+   * exists modulo 256.
+   */
+
   const params = {
-    /*
-     * Odd numbers are required for
-     * modular inverses modulo 256.
-     */
+    a1: 1 + (2 * ri(128)),
+    b1: ri(256),
 
-    a1:
-      1 + 2 * ri(128),
-
-    b1:
-      ri(256),
-
-    a2:
-      1 + 2 * ri(128),
-
-    b2:
-      ri(256),
+    a2: 1 + (2 * ri(128)),
+    b2: ri(256),
 
     seedA:
       1 + ri(PERM_MOD - 1),
@@ -961,6 +1021,10 @@ function obfuscate(source) {
     orderSeed:
       1 + ri(PERM_MOD - 1)
   };
+
+  /*
+   * Encode.
+   */
 
   const decimal =
     decimalEncode(
@@ -974,10 +1038,10 @@ function obfuscate(source) {
     );
 
   /*
-   * Numeric payload validation.
+   * Decimal-only validation.
    */
 
-  if (!/^\d+$/.test(decimal)) {
+  if (!/^[0-9]+$/.test(decimal)) {
     throw new Error(
       'decimal payload violation'
     );
@@ -993,7 +1057,7 @@ function obfuscate(source) {
   }
 
   /*
-   * Internal round-trip validation.
+   * Internal round-trip test.
    */
 
   const back =
@@ -1014,14 +1078,14 @@ function obfuscate(source) {
   }
 
   /*
-   * Integrity hash.
+   * Source integrity.
    */
 
   const expectedHash =
     rollingHash32(raw);
 
   /*
-   * Build final loader.
+   * Final loader.
    */
 
   const code =
@@ -1077,3 +1141,8 @@ module.exports = {
   obfuscate,
   VERSION
 };
+```
+
+La diferencia importante es que **el código que sale de `obfuscate.js` ahora está pensado específicamente para Luau**, no para Lua genérico: usa `loadstring` como primera opción, evita sintaxis problemática, mantiene las operaciones `%`, `string.byte/char`, `string.find`, `table.concat` y separa completamente las variables del decoder.
+
+También conserva tu `VERSION = '1.2.0'` y **no eliminé las capas existentes**.
