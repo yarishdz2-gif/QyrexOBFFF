@@ -87,122 +87,38 @@ function chunkDecimal(decimal) {
 }
 
 function buildLoader(decimalPayload, a, b, expectedHash, sourceLen) {
-  const V = Array.from({ length: 24 }, rid);
+  const V = Array.from({ length: 18 }, rid);
   const parts = chunkDecimal(decimalPayload);
   const payloadTable = parts.map(luaQuote).join(',');
   const L = [];
 
-  L.push('-- QyrexObf by ikgmonxr qyrex.hopto.org 1.0.2');
+  // Keep the runtime compact and Luau-friendly: one statement stream, semicolons
+  // between every statement, no optional/nonstandard calls, and no Unicode payload.
+  L.push('-- QyrexObf by ikgmonxr qyrex.hopto.org 1.0.2\n');
   L.push('return(function(...)');
+  L.push(`local ${V[0]}={${payloadTable}};`);
+  L.push(`local ${V[1]}=${sourceLen};local ${V[2]}=${a};local ${V[3]}=${b};local ${V[4]}=${expectedHash};`);
+  L.push(`local ${V[5]}=type;local ${V[6]}=string;local ${V[7]}=table;local ${V[8]}=pcall;`);
 
-  // Static numeric configuration.
-  L.push(`local ${V[0]}={${payloadTable}}`);
-  L.push(`local ${V[1]}=${sourceLen}`);
-  L.push(`local ${V[2]}=${a}`);
-  L.push(`local ${V[3]}=${b}`);
-  L.push(`local ${V[4]}=${expectedHash}`);
+  // Integrated soft anti-tamper. It only records an environment flag; it never
+  // calls optional functions such as collectgarbage/hookfunction/gcinfo.
+  L.push(`local ${V[9]}=0;${V[8]}(function()local ${V[10]}=${V[5]}(game);if ${V[10]}=='userdata' or ${V[10]}=='table' then ${V[9]}=${V[9]}+1 end;if ${V[5]}(_G)=='table' then ${V[9]}=${V[9]}+1 end end);`);
 
-  // Conservative compatibility probes. None of these are fatal by themselves.
-  // We only refuse to continue when core APIs needed by the loader are absent.
-  L.push(`local ${V[5]}=type`);
-  L.push(`local ${V[6]}=string`);
-  L.push(`local ${V[7]}=table`);
-  L.push(`local ${V[8]}=pcall`);
-  L.push(`if ${V[5]}~='function' or ${V[5]}(${V[6]})~='table' or ${V[5]}(${V[6]}.sub)~='function' or ${V[5]}(${V[6]}.char)~='function' or ${V[5]}(${V[7]}.concat)~='function' then return end`);
+  // Find the modular inverse once using only arithmetic supported by Luau.
+  L.push(`local ${V[11]}=1;while ((${V[2]}*${V[11]})%256)~=1 do ${V[11]}=${V[11]}+1;if ${V[11]}>255 then return end end;`);
 
-  // Non-fatal anti-tamper/environment score. It is intentionally tolerant of
-  // normal Roblox/Luau differences so legitimate scripts keep running.
-  L.push(`local ${V[9]}=0`);
-  L.push(`${V[8]}(function()`);
-  L.push(`  local ${V[23]}=${V[5]}(game)`);
-  L.push(`  if ${V[23]}=='userdata' or ${V[23]}=='table' then`);
-  L.push(`    ${V[9]}=${V[9]}+1`);
-  L.push(`  end`);
-  L.push(`end)`);
-  L.push(`${V[8]}(function()`);
-  L.push(`  if ${V[5]}(gcinfo)=='function' then`);
-  L.push(`    local ${V[10]}=gcinfo()`);
-  L.push(`    if ${V[5]}(${V[10]})=='number' then`);
-  L.push(`      ${V[9]}=${V[9]}+1`);
-  L.push(`    end`);
-  L.push(`  end`);
-  L.push(`end)`);
-  L.push(`${V[8]}(function()`);
-  L.push(`  if ${V[5]}(getmetatable)=='function' and getmetatable(_G)~=nil then`);
-  L.push(`    ${V[9]}=${V[9]}-1`);
-  L.push(`  end`);
-  L.push(`end)`);
-  L.push(`${V[8]}(function()`);
-  L.push(`  if ${V[5]}(hookfunction)=='function' or ${V[5]}(newcclosure)=='function' or ${V[5]}(replaceclosure)=='function' then`);
-  L.push(`    ${V[9]}=${V[9]}-1`);
-  L.push(`  end`);
-  L.push(`end)`);
+  // Join and validate the numeric payload.
+  L.push(`local ${V[12]}=${V[7]}.concat(${V[0]});${V[0]}=nil;if #${V[12]}~=${V[1]}*3 then return end;`);
+  L.push(`local ${V[13]}={};local ${V[14]}=1;for ${V[15]}=1,#${V[12]},3 do local ${V[16]}=${V[6]}.sub(${V[12]},${V[15]},${V[15]}+2)+0;if ${V[16]}<0 or ${V[16]}>255 then return end;local ${V[17]}=(((${V[16]}-${V[3]}-(((${V[14]}-1)%251)))%256)+256)%256;${V[13]}[${V[14]}]=${V[6]}.char(((${V[17]}*${V[11]})%256));${V[14]}=${V[14]}+1 end;`);
+  L.push(`local ${V[12]}=${V[7]}.concat(${V[13]});${V[13]}=nil;`);
 
-  // Decimal -> original bytes.
-  L.push(`local function ${V[11]}(${V[12]})`);
-  L.push(`  if #${V[12]}%3~=0 then return nil end`);
-  L.push(`  local ${V[13]}={}`);
-  L.push(`  local ${V[14]}=1`);
-  L.push(`  local ${V[15]}=1`);
-  L.push(`  local ${V[16]}=1`);
-  L.push(`  while ${V[15]}<=#${V[12]} do`);
-  L.push(`    local ${V[17]}=${V[6]}.sub(${V[12]},${V[15]},${V[15]}+2)+0`);
-  L.push(`    if ${V[17]}<0 or ${V[17]}>255 then return nil end`);
-  L.push(`    local ${V[18]}=(((${V[2]}*${V[16]})%256)~=1) and nil or ${V[16]}`);
-  L.push(`    if ${V[18]}==nil then return nil end`);
-  L.push(`    local ${V[19]}=(((${V[17]}-${V[3]}-((${V[14]}-1)%251))%256)+256)%256`);
-  L.push(`    ${V[13]}[${V[14]}]=${V[6]}.char(((${V[19]}*${V[16]})%256))`);
-  L.push(`    ${V[14]}=${V[14]}+1`);
-  L.push(`    ${V[15]}=${V[15]}+3`);
-  L.push(`  end`);
-  L.push(`  return ${V[7]}.concat(${V[13]})`);
-  L.push(`end`);
+  // Integrity check before compilation.
+  L.push(`local ${V[17]}=2166136261;for ${V[14]}=1,#${V[12]} do local ${V[16]}=${V[6]}.byte(${V[12]},${V[14]});${V[17]}=(${V[17]}*16777619+${V[16]}+97)%4294967296 end;if ${V[17]}~=${V[4]} or #${V[12]}~=${V[1]} then return end;`);
 
-  // Find modular inverse in Luau once. This is bounded to 128 odd candidates.
-  L.push(`local ${V[16]}=1`);
-  L.push(`while ((${V[2]}*${V[16]})%256)~=1 do ${V[16]}=${V[16]}+2 if ${V[16]}>255 then return end end`);
-
-  // Join payload chunks without exposing source bytes.
-  L.push(`local ${V[13]}=${V[7]}.concat(${V[0]})`);
-  L.push(`if #${V[13]}~=${V[1]}*3 then return end`);
-  L.push(`local ${V[14]}=${V[13]}`);
-  L.push(`${V[13]}=nil`);
-
-  // Decode directly, avoiding Unicode/symbol handling completely.
-  L.push(`local ${V[17]}={}`);
-  L.push(`local ${V[18]}=1`);
-  L.push(`for ${V[19]}=1,#${V[14]},3 do`);
-  L.push(`  local ${V[20]}=${V[6]}.sub(${V[14]},${V[19]},${V[19]}+2)+0`);
-  L.push(`  local ${V[21]}=(((${V[20]}-${V[3]}-(((${V[18]}-1)%251)))%256)+256)%256`);
-  L.push(`  ${V[17]}[${V[18]}]=${V[6]}.char(((${V[21]}*${V[16]})%256))`);
-  L.push(`  ${V[18]}=${V[18]}+1`);
-  L.push(`end`);
-  L.push(`local ${V[22]}=${V[7]}.concat(${V[17]})`);
-  L.push(`${V[17]}=nil`);
-  L.push(`${V[14]}=nil`);
-
-  // Arithmetic FNV-style integrity check.
-  L.push(`local ${V[17]}=2166136261`);
-  L.push(`for ${V[18]}=1,#${V[22]} do`);
-  L.push(`  ${V[20]}=${V[6]}.byte(${V[22]},${V[18]})`);
-  L.push(`  ${V[17]}=(${V[17]}*16777619+${V[20]}+97)%4294967296`);
-  L.push(`end`);
-  L.push(`if ${V[17]}~=${V[4]} then return end`);
-  L.push(`if #${V[22]}~=${V[1]} then return end`);
-
-  // Compile and execute. Support both Roblox's loadstring and environments
-  // exposing load, without requiring collectgarbage or nonstandard APIs.
-  L.push(`local ${V[17]}=loadstring or load`);
-  L.push(`if ${V[5]}(${V[17]})~='function' then return end`);
-  L.push(`local ${V[18]},${V[19]}=${V[8]}(${V[17]},${V[22]})`);
-  L.push(`local ${V[20]}=${V[19]}`);
-  L.push(`${V[22]}=nil`);
-  L.push(`if not ${V[18]} or ${V[5]}(${V[20]})~='function' then return end`);
-  L.push(`if ${V[5]}(${V[20]})~='function' then return end`);
-  L.push(`return ${V[20]}(...)`);
+  // Compile and execute. Prefer loadstring for Roblox; fall back to load only.
+  L.push(`local ${V[13]}=loadstring;if ${V[5]}(${V[13]})~='function' then ${V[13]}=load end;if ${V[5]}(${V[13]})~='function' then return end;local ${V[14]},${V[15]}=${V[8]}(${V[13]},${V[12]});${V[12]}=nil;if not ${V[14]} or ${V[5]}(${V[15]})~='function' then return end;return ${V[15]}(...);`);
   L.push('end)(...)');
-
-  return L.join('\n');
+  return L.join('');
 }
 
 function obfuscate(source) {
