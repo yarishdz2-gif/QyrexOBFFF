@@ -13,7 +13,7 @@ const BLOCK_SIZE = 29;
 
 // Segunda capa: cada dígito decimal se representa con uno de estos 10 símbolos.
 // No aparecen 0-9 en el payload empaquetado.
-const DIGIT_SYMBOLS = '!\"#$%&/()=';
+const DIGIT_SYMBOLS = '°!\"#$%&/()';
 const DIGIT_MAP = Object.fromEntries([...DIGIT_SYMBOLS].map((ch, i) => [ch, String(i)]));
 const DIGIT_REVERSE = Array.from(DIGIT_SYMBOLS);
 
@@ -29,7 +29,7 @@ function rid() {
 function rollingHash32(buf) {
   let h = 2166136261;
   for (const b of buf) {
-    h = (h * 65599 + b + 97) % 4294967296;
+    h = (Math.imul(h, 16777619) + b + 97) >>> 0;
   }
   return h >>> 0;
 }
@@ -113,26 +113,37 @@ function buildLoader(symbolPayload, a, b, expectedHash, sourceLen) {
   L.push(`local ${V[5]}=${b}`);
   L.push(`local ${V[6]}=${expectedHash}`);
 
-  // Build symbol -> decimal digit lookup table using ASCII bytes only.
+  // Build symbol -> digit lookup table. The packed payload contains no 0-9.
+  // Lua/Luau strings are byte sequences. The first symbol (°) is UTF-8 (2 bytes),
+  // so decoding one byte at a time would split it and break execution. Decode the
+  // symbol stream by recognizing its UTF-8 bytes explicitly, while keeping the
+  // visible payload alphabet exactly as requested.
   L.push(`local ${V[7]}={}`);
-  L.push(`${V[7]}[33]='0'`);
-  L.push(`${V[7]}[34]='1'`);
-  L.push(`${V[7]}[35]='2'`);
-  L.push(`${V[7]}[36]='3'`);
-  L.push(`${V[7]}[37]='4'`);
-  L.push(`${V[7]}[38]='5'`);
-  L.push(`${V[7]}[47]='6'`);
-  L.push(`${V[7]}[40]='7'`);
-  L.push(`${V[7]}[41]='8'`);
-  L.push(`${V[7]}[61]='9'`);
+  L.push(`${V[7]}[194]=string.char(48)`);
+  L.push(`${V[7]}[33]=string.char(49)`);
+  L.push(`${V[7]}[34]=string.char(50)`);
+  L.push(`${V[7]}[35]=string.char(51)`);
+  L.push(`${V[7]}[36]=string.char(52)`);
+  L.push(`${V[7]}[37]=string.char(53)`);
+  L.push(`${V[7]}[38]=string.char(54)`);
+  L.push(`${V[7]}[47]=string.char(55)`);
+  L.push(`${V[7]}[40]=string.char(56)`);
+  L.push(`${V[7]}[41]=string.char(57)`);
 
-  // Layer 1: symbols -> decimal digits. ASCII-only alphabet for Luau/Roblox.
+  // Layer 1: symbols -> decimal digits (UTF-8 aware for °).
   L.push(`local function ${V[9]}(s)`);
-  L.push(`  local o={} local j=1`);
-  L.push(`  for ${V[10]}=1,#s do`);
-  L.push(`    local d=${V[7]}[string.byte(s,${V[10]})]`);
-  L.push(`    if d==nil then return nil end`);
-  L.push(`    o[j]=d j=j+1`);
+  L.push(`  local o={} local j=1 local p=1 local n=#s`);
+  L.push(`  while p<=n do`);
+  L.push(`    local c=string.byte(s,p)`);
+  L.push(`    if c==194 then`);
+  L.push(`      if p+1>n or string.byte(s,p+1)~=176 then return nil end`);
+  L.push(`      o[j]=${V[7]}[194] p=p+2`);
+  L.push(`    else`);
+  L.push(`      local d=${V[7]}[c]`);
+  L.push(`      if d==nil then return nil end`);
+  L.push(`      o[j]=d p=p+1`);
+  L.push(`    end`);
+  L.push(`    j=j+1`);
   L.push(`  end`);
   L.push(`  return table.concat(o)`);
   L.push(`end`);
@@ -156,7 +167,7 @@ function buildLoader(symbolPayload, a, b, expectedHash, sourceLen) {
   L.push(`  local h=2166136261`);
   L.push(`  for ${V[13]}=1,#s do`);
   L.push(`    local c=string.byte(s,${V[13]})`);
-  L.push(`    h=(h*65599+c+97)%4294967296`);
+  L.push(`    h=(h*16777619+c+97)%4294967296`);
   L.push(`  end`);
   L.push(`  return h`);
   L.push(`end`);
@@ -193,7 +204,9 @@ function buildLoader(symbolPayload, a, b, expectedHash, sourceLen) {
   L.push(`local ${V[20]},${V[21]}=pcall(${V[19]},${V[18]})`);
   L.push(`${V[18]}=nil`);
   L.push(`if not ${V[20]} or type(${V[21]})~='function' then return end`);
-  L.push(`collectgarbage('collect')`);
+  // Roblox Luau may require an argument for collectgarbage; avoid that API here.
+  // gcinfo() is read-only and compatible with Roblox Luau.
+  L.push(`pcall(function() if gcinfo then local _=${V[21]} and gcinfo() end end)`);
   L.push(`return ${V[21]}(...)`);
   L.push(`end)(...)`);
 
