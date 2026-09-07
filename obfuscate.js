@@ -14,10 +14,20 @@ const CHUNK_SIZE_MAX = 156;
 
 const ri = (n) => crypto.randomInt(0, n);
 
-let uid = 0;
+const LUA_RESERVED = new Set([
+  'and','break','do','else','elseif','end','false','for','function','goto','if','in','local','nil','not','or','repeat','return','then','true','until','while'
+]);
 function rid() {
-  uid += 1 + ri(3);
-  return '_'.repeat(uid);
+  // Short randomized identifiers are far more reliable in Luau than long
+  // underscore-only names, while the payload itself remains digits-only.
+  const letters = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  let out = '';
+  do {
+    out = 'q';
+    const len = 5 + ri(4);
+    for (let i = 0; i < len; i++) out += letters[ri(letters.length)];
+  } while (LUA_RESERVED.has(out));
+  return out;
 }
 
 function modInverse256(a) {
@@ -77,7 +87,6 @@ function chunkDecimal(decimal) {
 }
 
 function buildLoader(decimalPayload, a, b, expectedHash, sourceLen) {
-  uid = 0;
   const V = Array.from({ length: 24 }, rid);
   const parts = chunkDecimal(decimalPayload);
   const payloadTable = parts.map(luaQuote).join(',');
