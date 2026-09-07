@@ -1,5 +1,5 @@
 /**
- * QyrexObf 1.3.0 — Hardened decimal loader
+ * QyrexObf 1.3.3 — Luau-compatible hardened decimal loader
  * Keeps the public API: obfuscate(source) -> { code, stats }
  *
  * Hardening layers:
@@ -17,7 +17,7 @@
 'use strict';
 
 const crypto = require('crypto');
-const VERSION = '1.3.2';
+const VERSION = '1.3.3';
 const MAX_SOURCE = 1_500_000;
 const ri = (n) => crypto.randomInt(0, n);
 
@@ -38,6 +38,20 @@ function rid() {
 
 function u32(n) { return n >>> 0; }
 
+// Byte XOR implemented without Luau bitwise operators.
+function xorByte(a, b) {
+  a &= 255; b &= 255;
+  let out = 0, bit = 1;
+  for (let i = 0; i < 8; i++, bit *= 2) {
+    const abit = a % 2;
+    const bbit = b % 2;
+    if (abit !== bbit) out += bit;
+    a = Math.floor(a / 2);
+    b = Math.floor(b / 2);
+  }
+  return out;
+}
+
 function modInv(a) {
   for (let x = 1; x < 256; x++) {
     if (((a * x) % 256 + 256) % 256 === 1) return x;
@@ -57,7 +71,7 @@ function keyedMask(seed, i, a, b) {
 function decEnc(buf, a, b, seed) {
   let out = '';
   for (let i = 0; i < buf.length; i++) {
-    const x = buf[i] ^ keyedMask(seed, i, a, b);
+    const x = xorByte(buf[i], keyedMask(seed, i, a, b));
     const y = (a * x + b + (i % 251)) % 256;
     out += String(y).padStart(3, '0');
   }
@@ -72,7 +86,7 @@ function decDec(d, a, b, seed) {
     const y = Number(d.slice(i, i + 3));
     if (!Number.isInteger(y) || y < 0 || y > 255) throw new Error('Invalid decimal byte');
     const z = ((y - b - (j % 251)) % 256 + 256) % 256;
-    out[j] = ((inv * z) % 256) ^ keyedMask(seed, j, a, b);
+    out[j] = xorByte((inv * z) % 256, keyedMask(seed, j, a, b));
   }
   return out;
 }
@@ -126,7 +140,7 @@ function buildDecimalLoader(decimal, a, b, streamSeed, expectedHash, expectedPay
   L.push(`local ${T}=type; local ${STR}=string; local ${TBL}=table; local ${PC}=pcall; `);
 
   // Restore chunk order before joining.
-  L.push(`local ${ENC}={}; for ${I}=1,#${O} do ${ENC}[${I}]=${P}[${O}[${I}]] end; ${P}=nil; ${O}=nil; `);
+  L.push(`local ${ENC}={}; for ${I}=1,#${O} do ${ENC}[${O}[${I}]]=${P}[${I}] end; ${P}=nil; ${O}=nil; `);
   L.push(`local ${SRC}=${TBL}.concat(${ENC}); ${ENC}=nil; if #${SRC}~=${N}*3 then return end; `);
 
   // Recover modular inverse once.
@@ -136,7 +150,7 @@ function buildDecimalLoader(decimal, a, b, streamSeed, expectedHash, expectedPay
   L.push(`local q=${STR}.sub(${SRC},${I},${I}+2)+0; if q<0 or q>255 then return end; `);
   L.push(`local j=${I}-1; local s=(${S}+(j+1)*374761393+${A}*668265263+${B}*2147483647)%4294967296; `);
   L.push(`if s<0 then s=s+4294967296 end; s=(s*1664525+1013904223)%4294967296; local m=s%256; `);
-  L.push(`local z=((q-${B}-(j%251))%256+256)%256; ${DEC}[#${DEC}+1]=${STR}.char(((((z*${INV})%256) ~ m)%256)); `);
+  L.push(`local z=((q-${B}-(j%251))%256+256)%256; local v=(z*${INV})%256; local out=0; local bit=1; for k=1,8 do local ab=v%2; local bb=m%2; if ab~=bb then out=out+bit end; v=math.floor(v/2); m=math.floor(m/2); bit=bit*2 end; ${DEC}[#${DEC}+1]=${STR}.char(out); `);
   L.push(`end; ${SRC}=nil; `);
 
   // Source integrity and payload integrity use the same small exact arithmetic hash as JS.
@@ -206,6 +220,7 @@ function obfuscate(source) {
         'per-byte-keyed-stream-mask',
         'keyed-chunk-permutation',
         'dual-integrity-check',
+        'no-bitwise-loader-syntax',
         'runtime-compatibility-checks',
         'double-nest',
         'runtime-key-derivation',
