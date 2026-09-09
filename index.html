@@ -3,243 +3,119 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Lua Obfuscator</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <title>Mega Lua Obfuscator</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
     :root {
-      --bg: #09090b; --surface: #111114; --surface2: #18181b; --border: #27272a;
-      --text: #fafafa; --muted: #a1a1aa; --accent: #8b5cf6; --accent-hover: #7c3aed;
-      --success: #34d399; --error: #f87171; --radius: 12px;
+      --bg:#09090b; --s:#111114; --s2:#18181b; --b:#27272a;
+      --t:#fafafa; --m:#a1a1aa; --a:#8b5cf6; --ah:#7c3aed; --ok:#34d399; --err:#f87171;
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: 'Inter', system-ui, sans-serif;
-      background: var(--bg); color: var(--text); min-height: 100vh; line-height: 1.5;
-    }
-    .bg-glow {
-      position: fixed; inset: 0; pointer-events: none; z-index: 0;
-      background:
-        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(139,92,246,.18), transparent),
-        radial-gradient(ellipse 60% 40% at 100% 100%, rgba(59,130,246,.08), transparent);
-    }
-    .container { position: relative; z-index: 1; max-width: 1100px; margin: 0 auto; padding: 32px 20px 60px; }
-    header { text-align: center; margin-bottom: 36px; }
-    header .badge {
-      display: inline-flex; align-items: center; gap: 6px;
-      background: rgba(139,92,246,.15); border: 1px solid rgba(139,92,246,.35);
-      color: #c4b5fd; font-size: 12px; font-weight: 600; padding: 4px 12px;
-      border-radius: 999px; margin-bottom: 14px;
-    }
-    header h1 { font-size: clamp(1.6rem,4vw,2.1rem); font-weight: 700; letter-spacing: -.03em; margin-bottom: 8px; }
-    header p { color: var(--muted); font-size: 15px; max-width: 480px; margin: 0 auto; }
-    .card {
-      background: var(--surface); border: 1px solid var(--border);
-      border-radius: 16px; padding: 20px; margin-bottom: 20px;
-    }
-    .card-title {
-      font-size: 13px; font-weight: 600; color: var(--muted);
-      text-transform: uppercase; letter-spacing: .06em; margin-bottom: 12px;
-      display: flex; align-items: center; justify-content: space-between;
-    }
-    textarea {
-      width: 100%; min-height: 220px; background: var(--surface2);
-      border: 1px solid var(--border); border-radius: var(--radius); color: var(--text);
-      font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 13px;
-      line-height: 1.55; padding: 14px 16px; resize: vertical; outline: none;
-      transition: border-color .15s;
-    }
-    textarea:focus { border-color: var(--accent); }
-    textarea::placeholder { color: #52525b; }
-    #out { min-height: 260px; }
-    .options { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px 16px; }
-    .opt {
-      display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none;
-      font-size: 14px; color: var(--muted); padding: 8px 10px; border-radius: 8px;
-      transition: background .15s, color .15s;
-    }
-    .opt:hover { background: var(--surface2); color: var(--text); }
-    .opt input {
-      appearance: none; width: 18px; height: 18px; border: 2px solid #3f3f46;
-      border-radius: 5px; background: var(--surface2); cursor: pointer; position: relative;
-      flex-shrink: 0; transition: all .15s;
-    }
-    .opt input:checked { background: var(--accent); border-color: var(--accent); }
-    .opt input:checked::after {
-      content: ''; position: absolute; left: 4px; top: 1px; width: 5px; height: 9px;
-      border: solid white; border-width: 0 2px 2px 0; transform: rotate(45deg);
-    }
-    .actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 4px; }
-    .btn {
-      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-      font-family: inherit; font-size: 14px; font-weight: 600; padding: 11px 22px;
-      border-radius: 10px; border: none; cursor: pointer; transition: all .15s;
-    }
-    .btn-primary { background: var(--accent); color: white; }
-    .btn-primary:hover:not(:disabled) { background: var(--accent-hover); box-shadow: 0 0 20px rgba(139,92,246,.35); }
-    .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
-    .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
-    .btn-ghost:hover { background: var(--surface2); color: var(--text); }
-    .status { font-size: 13px; color: var(--muted); min-height: 20px; }
-    .status.ok { color: var(--success); }
-    .status.err { color: var(--error); }
-    .spinner {
-      width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.3);
-      border-top-color: white; border-radius: 50%; animation: spin .7s linear infinite; display: none;
-    }
-    .btn.loading .spinner { display: block; }
-    .btn.loading .btn-text { display: none; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .stats { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; color: var(--muted); font-weight: 400; text-transform: none; letter-spacing: 0; }
-    .stats strong { color: var(--text); font-weight: 600; }
-    footer { text-align: center; margin-top: 40px; font-size: 12px; color: #52525b; }
-    .api-key-row { display: none; gap: 10px; align-items: center; margin-bottom: 16px; }
-    .api-key-row input {
-      flex: 1; max-width: 280px; background: var(--surface2); border: 1px solid var(--border);
-      border-radius: 8px; color: var(--text); font-family: 'JetBrains Mono', monospace;
-      font-size: 13px; padding: 8px 12px; outline: none;
-    }
-    .api-key-row input:focus { border-color: var(--accent); }
-    .api-key-row label { font-size: 13px; color: var(--muted); white-space: nowrap; }
-    @media (max-width: 600px) {
-      .container { padding: 20px 14px 40px; }
-      .card { padding: 14px; }
-      textarea { min-height: 160px; font-size: 12px; }
-      #out { min-height: 200px; }
-    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--t);min-height:100vh}
+    .glow{position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse 80% 50% at 50% -20%,rgba(139,92,246,.2),transparent)}
+    .wrap{position:relative;max-width:1100px;margin:0 auto;padding:28px 18px 50px}
+    header{text-align:center;margin-bottom:28px}
+    .badge{display:inline-block;background:rgba(139,92,246,.15);border:1px solid rgba(139,92,246,.4);color:#c4b5fd;font-size:12px;font-weight:600;padding:4px 12px;border-radius:999px;margin-bottom:12px}
+    h1{font-size:clamp(1.5rem,4vw,2rem);font-weight:700;letter-spacing:-.03em;margin-bottom:6px}
+    header p{color:var(--m);font-size:14px}
+    .card{background:var(--s);border:1px solid var(--b);border-radius:14px;padding:16px;margin-bottom:16px}
+    .label{font-size:12px;font-weight:600;color:var(--m);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px}
+    textarea{width:100%;min-height:200px;background:var(--s2);border:1px solid var(--b);border-radius:10px;color:var(--t);font-family:'JetBrains Mono',monospace;font-size:12.5px;line-height:1.5;padding:12px;resize:vertical;outline:none}
+    textarea:focus{border-color:var(--a)}
+    #out{min-height:240px}
+    .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px}
+    select,input[type=password]{background:var(--s2);border:1px solid var(--b);color:var(--t);border-radius:8px;padding:8px 12px;font-size:13px;outline:none}
+    select:focus,input:focus{border-color:var(--a)}
+    .btn{font-family:inherit;font-size:14px;font-weight:600;padding:10px 20px;border-radius:10px;border:none;cursor:pointer}
+    .btn-p{background:var(--a);color:#fff}
+    .btn-p:hover:not(:disabled){background:var(--ah)}
+    .btn-p:disabled{opacity:.5;cursor:not-allowed}
+    .btn-g{background:transparent;color:var(--m);border:1px solid var(--b)}
+    .btn-g:hover{background:var(--s2);color:var(--t)}
+    .st{font-size:13px;color:var(--m)}
+    .st.ok{color:var(--ok)}.st.err{color:var(--err)}
+    .stats{font-size:12px;color:var(--m);margin-left:auto}
+    .stats strong{color:var(--t)}
+    footer{text-align:center;margin-top:28px;font-size:12px;color:#52525b}
   </style>
 </head>
 <body>
-  <div class="bg-glow"></div>
-  <div class="container">
+  <div class="glow"></div>
+  <div class="wrap">
     <header>
-      <div class="badge">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        Pure JS · Render ready
-      </div>
-      <h1>Lua / Luau Obfuscator</h1>
-      <p>Ofusca strings, nombres, números y control-flow. Sin dependencias de luac.</p>
+      <div class="badge">Prometheus · IronBrew2 · Hercules · MoonSec</div>
+      <h1>Mega Lua Obfuscator</h1>
+      <p>Motor multi-engine. <strong>mega</strong> = Prometheus Strong → IB2 (máxima fuerza).</p>
     </header>
 
     <div class="card">
-      <div class="api-key-row" id="keyRow">
-        <label>API Key</label>
-        <input type="password" id="apiKey" placeholder="x-api-key" autocomplete="off" />
-      </div>
-      <div class="card-title">
-        <span>Código fuente</span>
-        <span style="font-weight:400;text-transform:none;letter-spacing:0">Lua / Luau</span>
-      </div>
-      <textarea id="src" spellcheck="false" placeholder="-- Pega tu script aquí&#10;print(&quot;Hola mundo&quot;)&#10;&#10;local function suma(a, b)&#10;  return a + b&#10;end&#10;&#10;print(suma(2, 3))"></textarea>
+      <div class="label">Código fuente</div>
+      <textarea id="src" spellcheck="false" placeholder='print("hello")'></textarea>
     </div>
 
     <div class="card">
-      <div class="card-title">Opciones</div>
-      <div class="options">
-        <label class="opt"><input type="checkbox" id="enc" checked /> Encrypt strings</label>
-        <label class="opt"><input type="checkbox" id="mangle" checked /> Mangle names</label>
-        <label class="opt"><input type="checkbox" id="nums" checked /> Encode numbers</label>
-        <label class="opt"><input type="checkbox" id="junk" checked /> Junk code</label>
-        <label class="opt"><input type="checkbox" id="cf" checked /> Control-flow wrap</label>
-        <label class="opt"><input type="checkbox" id="minify" checked /> Minify</label>
+      <div class="label">Motor / opciones</div>
+      <div class="row">
+        <label style="color:var(--m);font-size:13px">Engine
+          <select id="engine">
+            <option value="mega" selected>mega (Prometheus Strong → IB2)</option>
+            <option value="prometheus">prometheus only</option>
+            <option value="ib2">IronBrew2 only</option>
+            <option value="hercules">Hercules only</option>
+          </select>
+        </label>
+        <label style="color:var(--m);font-size:13px">Preset
+          <select id="preset">
+            <option>Strong</option>
+            <option>Medium</option>
+            <option>Weak</option>
+            <option>Minify</option>
+          </select>
+        </label>
+        <label style="color:var(--m);font-size:13px">API Key
+          <input type="password" id="key" placeholder="opcional" style="width:140px" />
+        </label>
+      </div>
+      <div class="row">
+        <button class="btn btn-p" id="btn" onclick="run()">Ofuscar</button>
+        <button class="btn btn-g" onclick="copyOut()">Copiar</button>
+        <button class="btn btn-g" onclick="dl()">Descargar</button>
+        <span class="st" id="st"></span>
+        <span class="stats" id="stats"></span>
       </div>
     </div>
 
-    <div class="actions">
-      <button class="btn btn-primary" id="btn" onclick="run()">
-        <span class="spinner"></span>
-        <span class="btn-text">Ofuscar</span>
-      </button>
-      <button class="btn btn-ghost" onclick="copyOut()">Copiar</button>
-      <button class="btn btn-ghost" onclick="downloadOut()">Descargar .lua</button>
-      <button class="btn btn-ghost" onclick="clearAll()">Limpiar</button>
-      <div class="status" id="st"></div>
+    <div class="card">
+      <div class="label">Resultado ofuscado</div>
+      <textarea id="out" readonly spellcheck="false" placeholder="Aquí sale el código ofuscado (puede ser muy grande)..."></textarea>
     </div>
-
-    <div class="card" style="margin-top:20px">
-      <div class="card-title">
-        <span>Resultado</span>
-        <span id="stats" class="stats"></span>
-      </div>
-      <textarea id="out" readonly spellcheck="false" placeholder="El código ofuscado aparecerá aquí..."></textarea>
-    </div>
-
-    <footer>Ctrl+Enter para ofuscar · Listo para Render</footer>
+    <footer>Docker + lua5.1 · Deploy en Render con Dockerfile</footer>
   </div>
-
   <script>
-    function opts() {
-      return {
-        encryptStrings: document.getElementById('enc').checked,
-        mangleNames: document.getElementById('mangle').checked,
-        encodeNumbers: document.getElementById('nums').checked,
-        junkCode: document.getElementById('junk').checked,
-        controlFlow: document.getElementById('cf').checked,
-        minify: document.getElementById('minify').checked
-      };
+    async function run(){
+      const btn=document.getElementById('btn'), st=document.getElementById('st');
+      const src=document.getElementById('src').value;
+      if(!src.trim()){st.className='st err';st.textContent='Pega código';return}
+      btn.disabled=true; st.className='st'; st.textContent='Ofuscando (puede tardar 10–60s)…';
+      document.getElementById('stats').textContent='';
+      try{
+        const h={'Content-Type':'application/json'};
+        const k=document.getElementById('key').value.trim(); if(k) h['x-api-key']=k;
+        const r=await fetch('/obfuscate',{method:'POST',headers:h,body:JSON.stringify({
+          source:src,
+          engine:document.getElementById('engine').value,
+          preset:document.getElementById('preset').value
+        })});
+        const d=await r.json();
+        if(!d.success) throw new Error(d.error||'fail');
+        document.getElementById('out').value=d.code;
+        st.className='st ok'; st.textContent='OK · '+d.engine+(d.warning?' · '+d.warning:'');
+        document.getElementById('stats').innerHTML='<strong>'+d.timeMs+'</strong> ms · <strong>'+d.originalSize.toLocaleString()+'</strong> → <strong>'+d.obfuscatedSize.toLocaleString()+'</strong> B';
+      }catch(e){st.className='st err';st.textContent=e.message}
+      finally{btn.disabled=false}
     }
-    function headers() {
-      const h = { 'Content-Type': 'application/json' };
-      const k = document.getElementById('apiKey').value.trim();
-      if (k) h['x-api-key'] = k;
-      return h;
-    }
-    async function run() {
-      const btn = document.getElementById('btn');
-      const st = document.getElementById('st');
-      const src = document.getElementById('src').value;
-      if (!src.trim()) { st.className = 'status err'; st.textContent = 'Pega un script primero'; return; }
-      btn.disabled = true; btn.classList.add('loading');
-      st.className = 'status'; st.textContent = 'Ofuscando…';
-      document.getElementById('stats').innerHTML = '';
-      try {
-        const r = await fetch('/obfuscate', {
-          method: 'POST', headers: headers(),
-          body: JSON.stringify({ source: src, options: opts() })
-        });
-        const data = await r.json();
-        if (r.status === 401) {
-          document.getElementById('keyRow').style.display = 'flex';
-          throw new Error('API key requerida. Rellena el campo de arriba.');
-        }
-        if (!data.success) throw new Error(data.error || 'Error');
-        document.getElementById('out').value = data.code;
-        st.className = 'status ok'; st.textContent = 'Listo';
-        document.getElementById('stats').innerHTML =
-          '<span><strong>' + data.timeMs + '</strong> ms</span>' +
-          '<span><strong>' + data.originalSize.toLocaleString() + '</strong> → <strong>' + data.obfuscatedSize.toLocaleString() + '</strong> B</span>';
-      } catch (e) {
-        st.className = 'status err'; st.textContent = e.message || String(e);
-      } finally {
-        btn.disabled = false; btn.classList.remove('loading');
-      }
-    }
-    function copyOut() {
-      const out = document.getElementById('out').value;
-      if (!out) return;
-      navigator.clipboard.writeText(out).then(() => {
-        document.getElementById('st').className = 'status ok';
-        document.getElementById('st').textContent = 'Copiado';
-      });
-    }
-    function downloadOut() {
-      const out = document.getElementById('out').value;
-      if (!out) return;
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([out], { type: 'text/plain' }));
-      a.download = 'obfuscated.lua';
-      a.click();
-    }
-    function clearAll() {
-      document.getElementById('src').value = '';
-      document.getElementById('out').value = '';
-      document.getElementById('st').textContent = '';
-      document.getElementById('stats').innerHTML = '';
-    }
-    document.addEventListener('keydown', e => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); run(); }
-    });
+    function copyOut(){const o=document.getElementById('out').value;if(o)navigator.clipboard.writeText(o)}
+    function dl(){const o=document.getElementById('out').value;if(!o)return;const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([o],{type:'text/plain'}));a.download='obfuscated.lua';a.click()}
   </script>
 </body>
 </html>

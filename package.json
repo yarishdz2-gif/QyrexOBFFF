@@ -1,14 +1,12 @@
 {
-  "name": "lua-obfuscator",
-  "version": "1.0.0",
-  "description": "Lua/Luau obfuscator API for Render",
+  "name": "mega-lua-obfuscator",
+  "version": "2.0.0",
+  "description": "Prometheus + IronBrew2 + Hercules multi-engine Lua obfuscator for Render",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
-  "engines": {
-    "node": ">=18"
-  },
+  "engines": { "node": ">=18" },
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.21.0",
