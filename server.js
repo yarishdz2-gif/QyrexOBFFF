@@ -93,6 +93,7 @@ app.post('/obfuscate', requireKey, (req, res) => {
     const t0 = Date.now();
     const opts = {};
     if (req.body && req.body.antiTamper === false) opts.antiTamper = false;
+    if (req.body && req.body.mode) opts.mode = String(req.body.mode);
 
     let result;
     try {
@@ -116,6 +117,7 @@ app.post('/obfuscate', requireKey, (req, res) => {
       engine: 'QyrexOBF',
       steps: result.steps || null,
       antiTamper: !!result.antiTamper,
+      mode: result.mode || opts.mode || 'normal',
       code: result.code
     });
   } catch (err) {

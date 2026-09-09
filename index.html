@@ -336,6 +336,15 @@
     }
     .error-box.show { display: block; }
 
+  
+    select#mode {
+      background: var(--s2); border: 1px solid var(--border);
+      color: var(--text); border-radius: 10px;
+      padding: 10px 12px; font-size: 13px; outline: none;
+      font-family: inherit; cursor: pointer;
+    }
+    select#mode:focus { border-color: var(--border-h); }
+
   </style>
 </head>
 <body>
@@ -389,6 +398,14 @@
         <input type="checkbox" id="at" checked />
         <span>AntiTamper</span>
       </label>
+      <div class="field">
+        <label for="mode">Modo</label>
+        <select id="mode" title="Fast evita 502 en hosts con timeout corto">
+          <option value="fast">Fast (recomendado en Render)</option>
+          <option value="normal" selected>Normal</option>
+          <option value="max">Max</option>
+        </select>
+      </div>
       <div class="status" id="st">Pega tu script Lua / Luau y pulsa Ofuscar</div>
     </div>
 
@@ -480,7 +497,8 @@
           headers,
           body: JSON.stringify({
             source: src,
-            antiTamper: $("at") ? $("at").checked : true
+            antiTamper: $("at") ? $("at").checked : true,
+            mode: $("mode") ? $("mode").value : "normal"
           }),
         });
         const rawText = await r.text();
@@ -488,13 +506,20 @@
         try {
           d = rawText ? JSON.parse(rawText) : null;
         } catch (_) {
+          const hint502 = (r.status === 502 || r.status === 504)
+          ? " · Timeout del host (Render ~30s). Usa modo Fast y/o desactiva AntiTamper."
+          : "";
           throw new Error(
-            "El servidor no devolvió JSON (posible timeout/crash). " +
-            "Prueba desactivar AntiTamper o un script más corto. Detalle: " +
-            (rawText ? rawText.slice(0, 400) : "respuesta vacía · status " + r.status)
+            (rawText ? rawText.slice(0, 400) : ("Respuesta vacía del servidor (status " + r.status + ")")) +
+            hint502
           );
         }
-        if (!d) throw new Error("Respuesta vacía del servidor (status " + r.status + ")");
+        if (!d) {
+          const hint = (r.status === 502 || r.status === 504)
+            ? " Timeout del host. Cambia Modo a Fast y reintenta."
+            : "";
+          throw new Error("Respuesta vacía del servidor (status " + r.status + ")." + hint);
+        }
         if (!d.success) throw new Error(d.error || "Error de ofuscación");
 
         $("out").value = d.code;
