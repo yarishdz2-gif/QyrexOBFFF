@@ -14209,83 +14209,46 @@ function buildAntiTamper() {
 function obfuscate(source, opts) {
   opts = opts || {};
   getRoot();
-  // Modes:
-  //   fast   → Prometheus Medium only (best for Render ~30s limits)
-  //   normal → Prometheus Strong + Hercules + IronBrew2 (default)
-  //   max    → same as normal, keep all engines aggressive
-  const mode = String(opts.mode || "normal").toLowerCase();
+  // ALWAYS MAX: AntiTamper → Prometheus Strong → Hercules → IronBrew2
   const wantAT = opts.antiTamper !== false;
   const steps = [];
-  let code;
   let usedAT = false;
+  let code;
 
-  function runPipeline(src, tagAT) {
+  function fullMax(src, tagAT) {
     const st = [];
     if (tagAT) st.push("AntiTamper:v2");
-    let c;
-    if (mode === "fast") {
-      c = runPrometheus(src, "Medium");
-      st.push("Prometheus:Medium");
-    } else {
-      try {
-        c = runPrometheus(src, "Strong");
-        st.push("Prometheus:Strong");
-      } catch (eStrong) {
-        // last-resort preset if Strong/Medium internal retry still fails
-        c = runPrometheus(src, "Weak");
-        st.push("Prometheus:Weak");
-      }
-      if (mode !== "fast") {
-        try { c = runHercules(c); st.push("Hercules"); } catch (e) { st.push("Hercules:skip"); }
-        try { c = runIB2(c); st.push("IronBrew2"); } catch (e) { st.push("IronBrew2:skip"); }
-      }
-    }
+    let c = runPrometheus(src, "Strong");
+    st.push("Prometheus:Strong");
+    try { c = runHercules(c); st.push("Hercules"); } catch (e) { st.push("Hercules:skip"); }
+    try { c = runIB2(c); st.push("IronBrew2"); } catch (e) { st.push("IronBrew2:skip"); }
     return { code: c, steps: st };
   }
 
-  function withOptionalAT(srcBase) {
-    if (!wantAT) {
-      const r = runPipeline(srcBase, false);
-      return { code: r.code, steps: r.steps, usedAT: false };
-    }
+  if (wantAT) {
     try {
       const at = buildAntiTamper();
-      const src = at + "\n" + srcBase;
-      const r = runPipeline(src, true);
-      return { code: r.code, steps: r.steps, usedAT: true };
+      const r = fullMax(at + "\n" + source, true);
+      code = r.code;
+      steps.push.apply(steps, r.steps);
+      usedAT = true;
     } catch (e) {
-      const st = ["AntiTamper:fallback"];
-      const r = runPipeline(srcBase, false);
-      return { code: r.code, steps: st.concat(r.steps), usedAT: false };
+      steps.push("AntiTamper:fallback");
+      const r = fullMax(source, false);
+      code = r.code;
+      steps.push.apply(steps, r.steps);
     }
+  } else {
+    const r = fullMax(source, false);
+    code = r.code;
+    steps.push.apply(steps, r.steps);
   }
-
-  // Primary attempt
-  let result;
-  try {
-    result = withOptionalAT(source);
-  } catch (e1) {
-    // Emergency: drop AT + force fast path so host doesn't 502
-    try {
-      const st = ["Emergency:fast"];
-      const c = runPrometheus(source, "Medium");
-      st.push("Prometheus:Medium");
-      result = { code: c, steps: st, usedAT: false };
-    } catch (e2) {
-      const msg = (e2 && e2.message) || (e1 && e1.message) || "Obfuscation failed";
-      throw new Error(String(msg).slice(0, 2000));
-    }
-  }
-
-  code = result.code;
-  steps.push.apply(steps, result.steps);
-  usedAT = result.usedAT;
 
   const header = "--QyrexObf [qyrex.hopto.org]\n";
   if (typeof code === "string" && !code.startsWith("--QyrexObf")) {
     code = header + code;
   }
-  return { code: code, engine: "QyrexOBF", steps: steps, antiTamper: usedAT, mode: mode };
+  return { code: code, engine: "QyrexOBF", steps: steps, antiTamper: usedAT, mode: "max" };
 }
 
 module.exports = { obfuscate: obfuscate, getRoot: getRoot, findLua: findLua, findLuac: findLuac };

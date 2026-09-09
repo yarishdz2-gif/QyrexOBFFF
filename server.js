@@ -6,6 +6,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const { obfuscate, findLua, findLuac, getRoot } = require('./obfuscate');
 
 function stripAnsi(str) {
@@ -21,6 +22,18 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 const API_KEY = process.env.API_KEY || '';
 
+// In-memory jobs (single instance). Survives long MAX runs without proxy 502.
+const jobs = new Map();
+const JOB_TTL_MS = 30 * 60 * 1000;
+
+function cleanJobs() {
+  const now = Date.now();
+  for (const [id, j] of jobs) {
+    if (now - j.createdAt > JOB_TTL_MS) jobs.delete(id);
+  }
+}
+setInterval(cleanJobs, 60000).unref();
+
 process.on('uncaughtException', (err) => {
   console.error('[QyrexOBF] uncaughtException', stripAnsi(err && err.message));
 });
@@ -34,7 +47,7 @@ app.use(cors({ origin: true }));
 app.use(express.json({ limit: '32mb' }));
 app.use(rateLimit({
   windowMs: 60000,
-  max: 30,
+  max: 40,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, error: 'Rate limit — espera un momento' }
@@ -56,81 +69,136 @@ app.get('/health', (req, res) => {
     ok: !!(lua && engines),
     product: 'QyrexOBF v2',
     fused: 'AntiTamper → Prometheus Strong → Hercules → IronBrew2',
+    mode: 'max',
+    async: true,
     lua: lua,
     luac: luac,
     enginesReady: engines,
+    jobs: jobs.size,
     hint: lua ? null : 'lua5.1 missing — deploy with Dockerfile (Runtime: Docker on Render)',
     uptime: process.uptime()
   });
 });
 
-app.post('/obfuscate', requireKey, (req, res) => {
-  const reply = (status, body) => {
-    if (res.headersSent) return;
-    try {
-      res.status(status).json(body);
-    } catch (e) {
-      try { res.status(status).end(JSON.stringify(body)); } catch (_) {}
-    }
+function startJob(source, opts) {
+  const id = crypto.randomBytes(12).toString('hex');
+  const job = {
+    id,
+    status: 'queued', // queued | running | done | error
+    createdAt: Date.now(),
+    startedAt: null,
+    finishedAt: null,
+    error: null,
+    result: null
   };
+  jobs.set(id, job);
 
+  setImmediate(() => {
+    const j = jobs.get(id);
+    if (!j) return;
+    j.status = 'running';
+    j.startedAt = Date.now();
+    try {
+      if (!findLua()) {
+        throw new Error('QyrexOBF: lua5.1 no encontrado. En Render usa Runtime DOCKER.');
+      }
+      const result = obfuscate(source, opts || {});
+      if (!result || typeof result.code !== 'string' || !result.code.length) {
+        throw new Error('QyrexOBF no generó output');
+      }
+      j.status = 'done';
+      j.finishedAt = Date.now();
+      j.result = {
+        success: true,
+        product: 'QyrexOBF v2',
+        timeMs: j.finishedAt - j.startedAt,
+        originalSize: source.length,
+        obfuscatedSize: result.code.length,
+        engine: 'QyrexOBF',
+        steps: result.steps || null,
+        antiTamper: !!result.antiTamper,
+        mode: 'max',
+        code: result.code
+      };
+    } catch (err) {
+      j.status = 'error';
+      j.finishedAt = Date.now();
+      j.error = stripAnsi(err && (err.message || String(err))) || 'Obfuscation failed';
+      console.error('[QyrexOBF] job', id, j.error);
+    }
+  });
+
+  return id;
+}
+
+// Start MAX obfuscation (async — avoids 502 on long runs)
+app.post('/obfuscate', requireKey, (req, res) => {
   try {
+    const source = (req.body && (req.body.source || req.body.code)) || '';
+    if (!source || String(source).trim().length < 2) {
+      return res.status(400).json({ success: false, error: 'Missing source — pega código Lua/Luau' });
+    }
+    if (source.length > 8000000) {
+      return res.status(400).json({ success: false, error: 'Source too large (max ~8MB)' });
+    }
     if (!findLua()) {
-      return reply(500, {
+      return res.status(500).json({
         success: false,
-        error: 'QyrexOBF: lua5.1 no encontrado. En Render usa Runtime DOCKER (no Node). Abre /health para diagnosticar.'
+        error: 'QyrexOBF: lua5.1 no encontrado. En Render usa Runtime DOCKER (no Node). Abre /health.'
       });
     }
 
-    const source = (req.body && (req.body.source || req.body.code)) || '';
-    if (!source || String(source).trim().length < 2) {
-      return reply(400, { success: false, error: 'Missing source — pega código Lua/Luau' });
-    }
-    if (source.length > 8000000) {
-      return reply(400, { success: false, error: 'Source too large (max ~8MB)' });
-    }
-
-    const t0 = Date.now();
-    const opts = {};
+    const opts = { antiTamper: true, mode: 'max' };
     if (req.body && req.body.antiTamper === false) opts.antiTamper = false;
-    if (req.body && req.body.mode) opts.mode = String(req.body.mode);
 
-    let result;
-    try {
-      result = obfuscate(source, opts);
-    } catch (err) {
-      const clean = stripAnsi(err && (err.message || String(err))) || 'Obfuscation failed';
-      console.error('[QyrexOBF] obfuscate error:', clean);
-      return reply(500, { success: false, error: clean });
-    }
-
-    if (!result || typeof result.code !== 'string' || !result.code.length) {
-      return reply(500, { success: false, error: 'QyrexOBF no generó output' });
-    }
-
-    return reply(200, {
+    const jobId = startJob(String(source), opts);
+    return res.status(202).json({
       success: true,
-      product: 'QyrexOBF v2',
-      timeMs: Date.now() - t0,
-      originalSize: source.length,
-      obfuscatedSize: result.code.length,
-      engine: 'QyrexOBF',
-      steps: result.steps || null,
-      antiTamper: !!result.antiTamper,
-      mode: result.mode || opts.mode || 'normal',
-      code: result.code
+      async: true,
+      jobId,
+      status: 'queued',
+      mode: 'max',
+      message: 'Ofuscación MAX en segundo plano. Consulta /job/' + jobId
     });
   } catch (err) {
-    const clean = stripAnsi(err && (err.message || String(err))) || 'fail';
-    console.error('[QyrexOBF]', clean);
-    return reply(500, { success: false, error: clean });
+    return res.status(500).json({
+      success: false,
+      error: stripAnsi(err && err.message) || 'fail'
+    });
   }
+});
+
+// Poll job status / result
+app.get('/job/:id', requireKey, (req, res) => {
+  const j = jobs.get(req.params.id);
+  if (!j) {
+    return res.status(404).json({ success: false, error: 'Job no encontrado o expirado' });
+  }
+  if (j.status === 'done' && j.result) {
+    return res.json(j.result);
+  }
+  if (j.status === 'error') {
+    return res.status(500).json({
+      success: false,
+      status: 'error',
+      error: j.error || 'fail',
+      timeMs: j.finishedAt && j.startedAt ? (j.finishedAt - j.startedAt) : null
+    });
+  }
+  return res.json({
+    success: true,
+    async: true,
+    jobId: j.id,
+    status: j.status,
+    mode: 'max',
+    elapsedMs: Date.now() - (j.startedAt || j.createdAt)
+  });
 });
 
 const indexPath = path.join(__dirname, 'index.html');
 app.get('/', (req, res) => {
   if (fs.existsSync(indexPath)) return res.sendFile(indexPath);
-  res.json({ product: 'QyrexOBF v2' });
+  res.json({ product: 'QyrexOBF v2', mode: 'max', async: true });
 });
 
 app.use((req, res) => {
@@ -138,10 +206,11 @@ app.use((req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log('========== QyrexOBF ==========');
+  console.log('========== QyrexOBF MAX ==========');
   console.log('PORT', PORT);
+  console.log('mode MAX async jobs');
   console.log('lua ', findLua());
   console.log('luac', findLuac());
   try { getRoot(); console.log('engines extracted'); } catch (e) { console.error('extract', e.message); }
-  console.log('==============================');
+  console.log('==================================');
 });

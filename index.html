@@ -386,7 +386,7 @@
     </div>
 
     <div class="controls">
-      <button class="btn btn-primary" id="btn" onclick="run()">Ofuscar con QyrexOBF</button>
+      <button class="btn btn-primary" id="btn" onclick="run()">Ofuscar MAX · QyrexOBF</button>
       <button class="btn btn-ghost" onclick="copyOut()">Copiar resultado</button>
       <button class="btn btn-ghost" onclick="dl()">Descargar .lua</button>
       <button class="btn btn-ghost" onclick="clearAll()">Limpiar</button>
@@ -398,14 +398,6 @@
         <input type="checkbox" id="at" checked />
         <span>AntiTamper</span>
       </label>
-      <div class="field">
-        <label for="mode">Modo</label>
-        <select id="mode" title="Fast evita 502 en hosts con timeout corto">
-          <option value="fast">Fast (recomendado en Render)</option>
-          <option value="normal" selected>Normal</option>
-          <option value="max">Max</option>
-        </select>
-      </div>
       <div class="status" id="st">Pega tu script Lua / Luau y pulsa Ofuscar</div>
     </div>
 
@@ -482,23 +474,24 @@
       btn.disabled = true;
       btn.classList.add("loading");
       st.className = "status warn";
-      st.textContent = "QyrexOBF fusionando… puede tardar 30–120s en scripts grandes";
+      st.textContent = "MAX en cola… AntiTamper → Prometheus Strong → Hercules → IronBrew2";
       setStats({});
+      $("errBox").classList.remove("show");
+      $("errBox").textContent = "";
+      $("out").value = "";
+
+      const headers = { "Content-Type": "application/json" };
+      const k = $("key").value.trim();
+      if (k) headers["x-api-key"] = k;
 
       try {
-        const headers = { "Content-Type": "application/json" };
-        const k = $("key").value.trim();
-        if (k) headers["x-api-key"] = k;
-
-        $("errBox").classList.remove("show");
-        $("errBox").textContent = "";
         const r = await fetch("/obfuscate", {
           method: "POST",
           headers,
           body: JSON.stringify({
             source: src,
             antiTamper: $("at") ? $("at").checked : true,
-            mode: $("mode") ? $("mode").value : "normal"
+            mode: "max"
           }),
         });
         const rawText = await r.text();
@@ -506,34 +499,68 @@
         try {
           d = rawText ? JSON.parse(rawText) : null;
         } catch (_) {
-          const hint502 = (r.status === 502 || r.status === 504)
-          ? " · Timeout del host (Render ~30s). Usa modo Fast y/o desactiva AntiTamper."
-          : "";
           throw new Error(
-            (rawText ? rawText.slice(0, 400) : ("Respuesta vacía del servidor (status " + r.status + ")")) +
-            hint502
+            rawText
+              ? rawText.slice(0, 400)
+              : ("Respuesta vacía (status " + r.status + ")")
           );
         }
-        if (!d) {
-          const hint = (r.status === 502 || r.status === 504)
-            ? " Timeout del host. Cambia Modo a Fast y reintenta."
-            : "";
-          throw new Error("Respuesta vacía del servidor (status " + r.status + ")." + hint);
-        }
-        if (!d.success) throw new Error(d.error || "Error de ofuscación");
+        if (!d) throw new Error("Respuesta vacía (status " + r.status + ")");
+        if (!d.success && !d.jobId) throw new Error(d.error || "Error al iniciar job");
 
-        $("out").value = d.code;
-        st.className = "status ok";
-        st.textContent = "Listo · " + (d.steps ? d.steps.join(" → ") : "QyrexOBF OK");
-        setStats(d);
-        toast("Ofuscación completada");
+        // Async job path
+        if (d.async && d.jobId) {
+          const jobId = d.jobId;
+          st.textContent = "MAX corriendo… job " + jobId.slice(0, 8) + " (puede tardar 1–3 min)";
+          const tPoll0 = Date.now();
+          while (true) {
+            await new Promise((res) => setTimeout(res, 1500));
+            const pr = await fetch("/job/" + encodeURIComponent(jobId), { headers });
+            const ptxt = await pr.text();
+            let pd;
+            try {
+              pd = ptxt ? JSON.parse(ptxt) : null;
+            } catch (_) {
+              throw new Error("Poll inválido: " + (ptxt || pr.status).toString().slice(0, 300));
+            }
+            if (!pd) throw new Error("Poll vacío");
+
+            if (pd.code && pd.success) {
+              $("out").value = pd.code;
+              st.className = "status ok";
+              st.textContent = "MAX listo · " + (pd.steps ? pd.steps.join(" → ") : "QyrexOBF");
+              setStats(pd);
+              toast("Ofuscación MAX completada");
+              break;
+            }
+            if (pd.success === false || pd.status === "error") {
+              throw new Error(pd.error || "Job falló");
+            }
+            // still running
+            const sec = Math.round((Date.now() - tPoll0) / 1000);
+            st.className = "status warn";
+            st.textContent = "MAX en progreso… " + sec + "s · " + (pd.status || "running");
+            if (Date.now() - tPoll0 > 15 * 60 * 1000) {
+              throw new Error("Timeout 15 min — el job sigue en el servidor, reintenta más tarde");
+            }
+          }
+        } else if (d.code) {
+          // sync fallback
+          $("out").value = d.code;
+          st.className = "status ok";
+          st.textContent = "MAX listo · " + (d.steps ? d.steps.join(" → ") : "QyrexOBF");
+          setStats(d);
+          toast("Ofuscación MAX completada");
+        } else {
+          throw new Error(d.error || "Respuesta inesperada");
+        }
       } catch (e) {
         const msg = (e && e.message) ? e.message : String(e);
         st.className = "status err";
         st.textContent = "Error de ofuscación";
         $("errBox").textContent = msg;
         $("errBox").classList.add("show");
-        toast("Error: revisa el detalle abajo");
+        toast("Error: revisa el detalle");
       } finally {
         btn.disabled = false;
         btn.classList.remove("loading");
