@@ -2,98 +2,526 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>QyrexOBF</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#06060b" />
+  <title>QyrexOBF — Advanced Lua Obfuscator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <style>
     :root {
-      --bg:#07070a; --s:#0f0f14; --s2:#16161d; --b:#2a2a35;
-      --t:#f4f4f5; --m:#a1a1aa; --a:#a78bfa; --ah:#8b5cf6; --ok:#34d399; --err:#f87171;
+      --bg: #06060b;
+      --bg2: #0b0b12;
+      --card: rgba(16, 16, 24, 0.78);
+      --card-solid: #101018;
+      --s2: #15151f;
+      --border: rgba(255, 255, 255, 0.07);
+      --border-h: rgba(167, 139, 250, 0.35);
+      --text: #f4f4f7;
+      --muted: #9b9baf;
+      --dim: #6b6b7c;
+      --accent: #a78bfa;
+      --accent2: #7c5cff;
+      --accent3: #6366f1;
+      --ok: #34d399;
+      --err: #fb7185;
+      --warn: #fbbf24;
+      --glow: rgba(124, 92, 255, 0.22);
+      --radius: 18px;
+      --shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
     }
-    *{box-sizing:border-box;margin:0;padding:0}
-    body{font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--t);min-height:100vh}
-    .glow{position:fixed;inset:0;pointer-events:none;
-      background:radial-gradient(ellipse 70% 45% at 50% -15%,rgba(167,139,250,.22),transparent)}
-    .wrap{position:relative;max-width:1080px;margin:0 auto;padding:32px 18px 56px}
-    header{text-align:center;margin-bottom:30px}
-    .logo{font-size:12px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--a);margin-bottom:10px}
-    h1{font-size:clamp(1.8rem,4vw,2.3rem);font-weight:700;letter-spacing:-.04em;margin-bottom:8px}
-    header p{color:var(--m);font-size:14px;max-width:540px;margin:0 auto;line-height:1.55}
-    .card{background:var(--s);border:1px solid var(--b);border-radius:16px;padding:18px;margin-bottom:16px}
-    .label{font-size:11px;font-weight:600;color:var(--m);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px}
-    textarea{width:100%;min-height:220px;background:var(--s2);border:1px solid var(--b);border-radius:12px;color:var(--t);
-      font-family:'JetBrains Mono',monospace;font-size:13px;line-height:1.55;padding:14px;resize:vertical;outline:none}
-    textarea:focus{border-color:var(--a)}
-    #out{min-height:260px}
-    .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
-    input[type=password]{background:var(--s2);border:1px solid var(--b);color:var(--t);border-radius:9px;padding:9px 12px;font-size:13px;outline:none}
-    .btn{font-family:inherit;font-size:14px;font-weight:600;padding:12px 24px;border-radius:11px;border:none;cursor:pointer}
-    .btn-p{background:linear-gradient(135deg,var(--ah),#6366f1);color:#fff}
-    .btn-p:hover:not(:disabled){filter:brightness(1.08);box-shadow:0 0 24px rgba(139,92,246,.35)}
-    .btn-p:disabled{opacity:.5;cursor:not-allowed}
-    .btn-g{background:transparent;color:var(--m);border:1px solid var(--b)}
-    .st{font-size:13px;color:var(--m)}.st.ok{color:var(--ok)}.st.err{color:var(--err)}
-    .stats{font-size:12px;color:var(--m);margin-left:auto}.stats strong{color:var(--t)}
-    footer{text-align:center;margin-top:32px;font-size:12px;color:#52525b}
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { min-height: 100%; }
+    body {
+      font-family: Inter, system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      overflow-x: hidden;
+    }
+
+    /* Background layers */
+    .bg {
+      position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background:
+        radial-gradient(ellipse 90% 55% at 50% -20%, rgba(124, 92, 255, 0.28), transparent 55%),
+        radial-gradient(ellipse 50% 40% at 100% 20%, rgba(99, 102, 241, 0.12), transparent 50%),
+        radial-gradient(ellipse 40% 35% at 0% 80%, rgba(167, 139, 250, 0.08), transparent 45%),
+        var(--bg);
+    }
+    .bg-grid {
+      position: fixed; inset: 0; pointer-events: none; z-index: 0; opacity: 0.35;
+      background-image:
+        linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: radial-gradient(ellipse 70% 60% at 50% 30%, black, transparent);
+    }
+
+    .app {
+      position: relative; z-index: 1;
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 28px 20px 64px;
+    }
+
+    /* Top bar */
+    .top {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 16px; margin-bottom: 28px; flex-wrap: wrap;
+    }
+    .brand {
+      display: flex; align-items: center; gap: 14px;
+    }
+    .logo-mark {
+      width: 44px; height: 44px; border-radius: 14px;
+      background: linear-gradient(135deg, var(--accent2), var(--accent3));
+      display: grid; place-items: center;
+      box-shadow: 0 8px 28px var(--glow);
+      font-weight: 800; font-size: 18px; letter-spacing: -0.04em;
+    }
+    .brand h1 {
+      font-size: 1.35rem; font-weight: 800; letter-spacing: -0.04em;
+      background: linear-gradient(90deg, #fff, #c4b5fd);
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    .brand .sub {
+      font-size: 12px; color: var(--muted); font-weight: 500;
+    }
+    .badge-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .badge {
+      font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
+      padding: 6px 11px; border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.03);
+      color: var(--muted);
+    }
+    .badge.on {
+      color: #ddd6fe;
+      border-color: rgba(167,139,250,0.35);
+      background: rgba(124,92,255,0.12);
+    }
+
+    /* Hero pipeline */
+    .pipeline {
+      display: flex; align-items: center; justify-content: center;
+      gap: 8px; flex-wrap: wrap;
+      margin-bottom: 28px;
+      padding: 14px 18px;
+      border-radius: 16px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      backdrop-filter: blur(12px);
+    }
+    .pipe-step {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 14px; border-radius: 12px;
+      background: var(--s2);
+      border: 1px solid var(--border);
+      font-size: 12.5px; font-weight: 600; color: var(--text);
+    }
+    .pipe-step .dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--accent); box-shadow: 0 0 10px var(--accent);
+    }
+    .pipe-arrow { color: var(--dim); font-size: 14px; }
+
+    /* Main grid */
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      margin-bottom: 18px;
+    }
+    @media (max-width: 920px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      backdrop-filter: blur(16px);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      display: flex; flex-direction: column;
+      min-height: 420px;
+    }
+    .panel-head {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 10px; padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(255,255,255,0.02);
+    }
+    .panel-head h2 {
+      font-size: 13px; font-weight: 700; letter-spacing: 0.06em;
+      text-transform: uppercase; color: var(--muted);
+    }
+    .panel-actions { display: flex; gap: 6px; }
+    .icon-btn {
+      appearance: none; border: 1px solid var(--border);
+      background: transparent; color: var(--muted);
+      font-size: 12px; font-weight: 600; font-family: inherit;
+      padding: 6px 10px; border-radius: 9px; cursor: pointer;
+      transition: 0.15s ease;
+    }
+    .icon-btn:hover { color: var(--text); border-color: var(--border-h); background: rgba(167,139,250,0.08); }
+
+    textarea {
+      flex: 1; width: 100%; min-height: 340px;
+      background: transparent; border: none; outline: none; resize: vertical;
+      color: var(--text);
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 13px; line-height: 1.6;
+      padding: 16px 18px;
+    }
+    textarea::placeholder { color: var(--dim); }
+    #out { min-height: 340px; }
+
+    /* Controls bar */
+    .controls {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+      padding: 16px 18px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      backdrop-filter: blur(16px);
+      margin-bottom: 18px;
+    }
+    .field {
+      display: flex; align-items: center; gap: 8px;
+    }
+    .field label {
+      font-size: 12px; font-weight: 600; color: var(--muted);
+      white-space: nowrap;
+    }
+    .field input {
+      background: var(--s2); border: 1px solid var(--border);
+      color: var(--text); border-radius: 10px;
+      padding: 10px 12px; font-size: 13px; outline: none;
+      width: min(200px, 40vw);
+      font-family: inherit;
+      transition: border-color 0.15s;
+    }
+    .field input:focus { border-color: var(--border-h); }
+
+    .btn {
+      appearance: none; border: none; cursor: pointer;
+      font-family: inherit; font-weight: 700; font-size: 14px;
+      padding: 12px 22px; border-radius: 12px;
+      transition: 0.18s ease;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent2), var(--accent3));
+      color: #fff;
+      box-shadow: 0 8px 28px rgba(99, 102, 241, 0.35);
+    }
+    .btn-primary:hover:not(:disabled) {
+      filter: brightness(1.08);
+      transform: translateY(-1px);
+      box-shadow: 0 12px 32px rgba(99, 102, 241, 0.45);
+    }
+    .btn-primary:disabled {
+      opacity: 0.55; cursor: not-allowed; transform: none;
+    }
+    .btn-ghost {
+      background: transparent; color: var(--muted);
+      border: 1px solid var(--border);
+    }
+    .btn-ghost:hover {
+      color: var(--text); border-color: var(--border-h);
+      background: rgba(167,139,250,0.08);
+    }
+
+    .status {
+      flex: 1; min-width: 180px;
+      font-size: 13px; color: var(--muted);
+    }
+    .status.ok { color: var(--ok); }
+    .status.err { color: var(--err); }
+    .status.warn { color: var(--warn); }
+
+    /* Stats */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    @media (max-width: 720px) {
+      .stats-row { grid-template-columns: 1fr 1fr; }
+    }
+    .stat {
+      padding: 14px 16px;
+      border-radius: 14px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      backdrop-filter: blur(12px);
+    }
+    .stat .k {
+      font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
+      text-transform: uppercase; color: var(--dim); margin-bottom: 4px;
+    }
+    .stat .v {
+      font-size: 1.15rem; font-weight: 800; letter-spacing: -0.02em;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+    .stat .v.accent { color: #c4b5fd; }
+
+    /* Footer */
+    footer {
+      text-align: center;
+      font-size: 12px; color: var(--dim);
+      padding-top: 8px;
+    }
+    footer a { color: var(--accent); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+
+    /* Loading pulse on button */
+    .btn-primary.loading {
+      position: relative;
+      overflow: hidden;
+    }
+    .btn-primary.loading::after {
+      content: "";
+      position: absolute; inset: 0;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent);
+      animation: shimmer 1.2s infinite;
+    }
+    @keyframes shimmer {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(100%); }
+    }
+
+    /* File drop hint */
+    .drop-hint {
+      font-size: 11px; color: var(--dim); margin-left: 4px;
+    }
+
+    /* Toast */
+    .toast {
+      position: fixed; bottom: 24px; left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: var(--card-solid);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 12px 18px; border-radius: 12px;
+      font-size: 13px; font-weight: 600;
+      box-shadow: var(--shadow);
+      opacity: 0; pointer-events: none;
+      transition: 0.25s ease;
+      z-index: 50;
+    }
+    .toast.show {
+      opacity: 1; transform: translateX(-50%) translateY(0);
+    }
   </style>
 </head>
 <body>
-  <div class="glow"></div>
-  <div class="wrap">
-    <header>
-      <div class="logo">QyrexOBF v2</div>
-      <h1>QyrexOBF</h1>
-      <p>Ofuscador fusionado + Anti-Tamper v2:<br><strong>AntiTamper → Prometheus Strong → Hercules → IronBrew2</strong></p>
-    </header>
+  <div class="bg"></div>
+  <div class="bg-grid"></div>
 
-    <div class="card">
-      <div class="label">Código fuente Lua / Luau</div>
-      <textarea id="src" spellcheck="false" placeholder='print("hola")'></textarea>
-    </div>
-
-    <div class="card">
-      <div class="row" style="margin-bottom:12px">
-        <label style="color:var(--m);font-size:13px">API Key (opcional)
-          <input type="password" id="key" placeholder="x-api-key" style="width:160px;margin-left:8px" />
-        </label>
+  <div class="app">
+    <div class="top">
+      <div class="brand">
+        <div class="logo-mark">Q</div>
+        <div>
+          <h1>QyrexOBF</h1>
+          <div class="sub">qyrex.hopto.org · Multi-engine Lua / Luau</div>
+        </div>
       </div>
-      <div class="row">
-        <button class="btn btn-p" id="btn" onclick="run()">Ofuscar con QyrexOBF</button>
-        <button class="btn btn-g" onclick="copyOut()">Copiar</button>
-        <button class="btn btn-g" onclick="dl()">Descargar</button>
-        <span class="st" id="st"></span>
-        <span class="stats" id="stats"></span>
+      <div class="badge-row">
+        <span class="badge on">AntiTamper v2</span>
+        <span class="badge on">Prometheus</span>
+        <span class="badge on">Hercules</span>
+        <span class="badge on">IronBrew2</span>
       </div>
     </div>
 
-    <div class="card">
-      <div class="label">Resultado QyrexOBF</div>
-      <textarea id="out" readonly spellcheck="false" placeholder="Output ofuscado…"></textarea>
+    <div class="pipeline">
+      <div class="pipe-step"><span class="dot"></span> AntiTamper</div>
+      <span class="pipe-arrow">→</span>
+      <div class="pipe-step"><span class="dot"></span> Prometheus Strong</div>
+      <span class="pipe-arrow">→</span>
+      <div class="pipe-step"><span class="dot"></span> Hercules</div>
+      <span class="pipe-arrow">→</span>
+      <div class="pipe-step"><span class="dot"></span> IronBrew2</div>
     </div>
-    <footer>QyrexOBF · Usa Runtime <b>Docker</b> en Render · Dockerfile incluye lua5.1</footer>
+
+    <div class="stats-row" id="statsRow">
+      <div class="stat"><div class="k">Tiempo</div><div class="v" id="sTime">—</div></div>
+      <div class="stat"><div class="k">Original</div><div class="v" id="sIn">—</div></div>
+      <div class="stat"><div class="k">Ofuscado</div><div class="v" id="sOut">—</div></div>
+      <div class="stat"><div class="k">Pipeline</div><div class="v accent" id="sPipe">listo</div></div>
+    </div>
+
+    <div class="controls">
+      <button class="btn btn-primary" id="btn" onclick="run()">Ofuscar con QyrexOBF</button>
+      <button class="btn btn-ghost" onclick="copyOut()">Copiar resultado</button>
+      <button class="btn btn-ghost" onclick="dl()">Descargar .lua</button>
+      <button class="btn btn-ghost" onclick="clearAll()">Limpiar</button>
+      <div class="field">
+        <label for="key">API Key</label>
+        <input type="password" id="key" placeholder="opcional · x-api-key" autocomplete="off" />
+      </div>
+      <div class="status" id="st">Pega tu script Lua / Luau y pulsa Ofuscar</div>
+    </div>
+
+    <div class="grid">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Fuente · Lua / Luau</h2>
+          <div class="panel-actions">
+            <button class="icon-btn" type="button" onclick="document.getElementById('file').click()">Cargar archivo</button>
+            <input type="file" id="file" accept=".lua,.luau,.txt,text/*" hidden />
+            <span class="drop-hint">hasta ~8 MB</span>
+          </div>
+        </div>
+        <textarea id="src" spellcheck="false" placeholder='-- pega aquí tu script&#10;print("hola")'></textarea>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Resultado · QyrexOBF</h2>
+          <div class="panel-actions">
+            <button class="icon-btn" type="button" onclick="copyOut()">Copiar</button>
+            <button class="icon-btn" type="button" onclick="dl()">.lua</button>
+          </div>
+        </div>
+        <textarea id="out" readonly spellcheck="false" placeholder="El output ofuscado aparecerá aquí…"></textarea>
+      </div>
+    </div>
+
+    <footer>
+      QyrexOBF · <a href="https://qyrex.hopto.org" target="_blank" rel="noopener">qyrex.hopto.org</a>
+      · Runtime <b>Docker</b> en Render · header <code>--QyrexObf [qyrex.hopto.org]</code>
+    </footer>
   </div>
+
+  <div class="toast" id="toast"></div>
+
   <script>
-    async function run(){
-      const btn=document.getElementById('btn'), st=document.getElementById('st');
-      const src=document.getElementById('src').value;
-      if(!src.trim()){st.className='st err';st.textContent='Pega código';return}
-      btn.disabled=true; st.className='st'; st.textContent='QyrexOBF fusionando… (puede tardar 30–120s)';
-      document.getElementById('stats').textContent='';
-      try{
-        const h={'Content-Type':'application/json'};
-        const k=document.getElementById('key').value.trim(); if(k) h['x-api-key']=k;
-        const r=await fetch('/obfuscate',{method:'POST',headers:h,body:JSON.stringify({source:src})});
-        const d=await r.json();
-        if(!d.success) throw new Error(d.error||'Error');
-        document.getElementById('out').value=d.code;
-        st.className='st ok';
-        st.textContent='QyrexOBF OK'+(d.steps?' · '+d.steps.join(' → '):'');
-        document.getElementById('stats').innerHTML='<strong>'+d.timeMs+'</strong> ms · <strong>'+d.originalSize.toLocaleString()+'</strong> → <strong>'+d.obfuscatedSize.toLocaleString()+'</strong> B';
-      }catch(e){st.className='st err';st.textContent=e.message}
-      finally{btn.disabled=false}
+    const $ = (id) => document.getElementById(id);
+    const toastEl = $("toast");
+    let toastTimer;
+
+    function toast(msg) {
+      toastEl.textContent = msg;
+      toastEl.classList.add("show");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toastEl.classList.remove("show"), 2200);
     }
-    function copyOut(){const o=document.getElementById('out').value;if(o)navigator.clipboard.writeText(o)}
-    function dl(){const o=document.getElementById('out').value;if(!o)return;const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([o],{type:'text/plain'}));a.download='qyrexobf.lua';a.click()}
+
+    function fmtBytes(n) {
+      if (n == null || isNaN(n)) return "—";
+      if (n < 1024) return n + " B";
+      if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+      return (n / (1024 * 1024)).toFixed(2) + " MB";
+    }
+
+    function setStats({ timeMs, originalSize, obfuscatedSize, steps }) {
+      $("sTime").textContent = timeMs != null ? timeMs + " ms" : "—";
+      $("sIn").textContent = fmtBytes(originalSize);
+      $("sOut").textContent = fmtBytes(obfuscatedSize);
+      $("sPipe").textContent = steps && steps.length ? steps.join(" → ") : "listo";
+    }
+
+    async function run() {
+      const btn = $("btn");
+      const st = $("st");
+      const src = $("src").value;
+      if (!src.trim()) {
+        st.className = "status err";
+        st.textContent = "Pega código fuente primero";
+        return;
+      }
+      btn.disabled = true;
+      btn.classList.add("loading");
+      st.className = "status warn";
+      st.textContent = "QyrexOBF fusionando… puede tardar 30–120s en scripts grandes";
+      setStats({});
+
+      try {
+        const headers = { "Content-Type": "application/json" };
+        const k = $("key").value.trim();
+        if (k) headers["x-api-key"] = k;
+
+        const r = await fetch("/obfuscate", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ source: src }),
+        });
+        const d = await r.json();
+        if (!d.success) throw new Error(d.error || "Error de ofuscación");
+
+        $("out").value = d.code;
+        st.className = "status ok";
+        st.textContent = "Listo · " + (d.steps ? d.steps.join(" → ") : "QyrexOBF OK");
+        setStats(d);
+        toast("Ofuscación completada");
+      } catch (e) {
+        st.className = "status err";
+        st.textContent = e.message || String(e);
+        toast("Error: " + (e.message || "falló"));
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove("loading");
+      }
+    }
+
+    function copyOut() {
+      const o = $("out").value;
+      if (!o) { toast("No hay resultado"); return; }
+      navigator.clipboard.writeText(o).then(
+        () => toast("Copiado al portapapeles"),
+        () => toast("No se pudo copiar")
+      );
+    }
+
+    function dl() {
+      const o = $("out").value;
+      if (!o) { toast("No hay resultado"); return; }
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([o], { type: "text/plain" }));
+      a.download = "qyrexobf.lua";
+      a.click();
+      URL.revokeObjectURL(a.href);
+      toast("Descarga iniciada");
+    }
+
+    function clearAll() {
+      $("src").value = "";
+      $("out").value = "";
+      $("st").className = "status";
+      $("st").textContent = "Pega tu script Lua / Luau y pulsa Ofuscar";
+      setStats({});
+    }
+
+    $("file").addEventListener("change", (ev) => {
+      const f = ev.target.files && ev.target.files[0];
+      if (!f) return;
+      if (f.size > 8 * 1024 * 1024) {
+        toast("Archivo demasiado grande (máx ~8 MB)");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        $("src").value = String(reader.result || "");
+        toast("Archivo cargado: " + f.name);
+      };
+      reader.readAsText(f);
+      ev.target.value = "";
+    });
+
+    // Ctrl/Cmd + Enter to run
+    document.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        e.preventDefault();
+        run();
+      }
+    });
   </script>
 </body>
 </html>
