@@ -8,6 +8,15 @@ const path = require('path');
 const fs = require('fs');
 const { obfuscate, findLua, findLuac, getRoot } = require('./obfuscate');
 
+function stripAnsi(str) {
+  return String(str || '')
+    .replace(/\u001b\[[0-9;]*m/g, '')
+    .replace(/\x1b\[[0-9;]*m/g, '')
+    .replace(/\[0m/g, '')
+    .replace(/\[[0-9]+m/g, '')
+    .trim();
+}
+
 const app = express();
 const PORT = process.env.PORT || 10000;
 const API_KEY = process.env.API_KEY || '';
@@ -58,7 +67,9 @@ app.post('/obfuscate', requireKey, (req, res) => {
       return res.status(400).json({ success: false, error: 'Source too large (max ~8MB)' });
     }
     const t0 = Date.now();
-    const result = obfuscate(source, {});
+    const opts = {};
+    if (req.body && req.body.antiTamper === false) opts.antiTamper = false;
+    const result = obfuscate(source, opts);
     res.json({
       success: true,
       product: 'QyrexOBF v2',
@@ -70,8 +81,10 @@ app.post('/obfuscate', requireKey, (req, res) => {
       code: result.code
     });
   } catch (err) {
-    console.error('[QyrexOBF]', err.message);
-    res.status(500).json({ success: false, error: err.message || 'fail' });
+    const raw = err && (err.message || String(err));
+    const clean = stripAnsi(raw) || 'fail';
+    console.error('[QyrexOBF]', clean);
+    res.status(500).json({ success: false, error: clean });
   }
 });
 

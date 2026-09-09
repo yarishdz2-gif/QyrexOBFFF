@@ -317,6 +317,25 @@
     .toast.show {
       opacity: 1; transform: translateX(-50%) translateY(0);
     }
+  
+    .toggle {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-size: 12px; font-weight: 600; color: var(--muted);
+      cursor: pointer; user-select: none;
+      padding: 8px 12px; border-radius: 10px;
+      border: 1px solid var(--border); background: rgba(255,255,255,0.02);
+    }
+    .toggle input { accent-color: var(--accent2); width: 15px; height: 15px; }
+    .toggle:hover { border-color: var(--border-h); color: var(--text); }
+    .error-box {
+      display: none; margin-bottom: 18px; padding: 14px 16px;
+      border-radius: 14px; border: 1px solid rgba(251,113,133,0.35);
+      background: rgba(251,113,133,0.08); color: #fecdd3;
+      font-family: 'JetBrains Mono', monospace; font-size: 12.5px;
+      white-space: pre-wrap; word-break: break-word; line-height: 1.55;
+    }
+    .error-box.show { display: block; }
+
   </style>
 </head>
 <body>
@@ -366,8 +385,14 @@
         <label for="key">API Key</label>
         <input type="password" id="key" placeholder="opcional · x-api-key" autocomplete="off" />
       </div>
+      <label class="toggle" title="Inyecta AntiTamper v2 antes del pipeline">
+        <input type="checkbox" id="at" checked />
+        <span>AntiTamper</span>
+      </label>
       <div class="status" id="st">Pega tu script Lua / Luau y pulsa Ofuscar</div>
     </div>
+
+    <div class="error-box" id="errBox"></div>
 
     <div class="grid">
       <div class="panel">
@@ -448,10 +473,15 @@
         const k = $("key").value.trim();
         if (k) headers["x-api-key"] = k;
 
+        $("errBox").classList.remove("show");
+        $("errBox").textContent = "";
         const r = await fetch("/obfuscate", {
           method: "POST",
           headers,
-          body: JSON.stringify({ source: src }),
+          body: JSON.stringify({
+            source: src,
+            antiTamper: $("at") ? $("at").checked : true
+          }),
         });
         const d = await r.json();
         if (!d.success) throw new Error(d.error || "Error de ofuscación");
@@ -462,9 +492,12 @@
         setStats(d);
         toast("Ofuscación completada");
       } catch (e) {
+        const msg = (e && e.message) ? e.message : String(e);
         st.className = "status err";
-        st.textContent = e.message || String(e);
-        toast("Error: " + (e.message || "falló"));
+        st.textContent = "Error de ofuscación";
+        $("errBox").textContent = msg;
+        $("errBox").classList.add("show");
+        toast("Error: revisa el detalle abajo");
       } finally {
         btn.disabled = false;
         btn.classList.remove("loading");
