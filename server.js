@@ -16,7 +16,7 @@ app.set('trust proxy', 1);
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: '2mb' }));
-app.use(rateLimit({ windowMs: 60000, max: 15, message: { error: 'Rate limit' } }));
+app.use(rateLimit({ windowMs: 60000, max: 12, message: { error: 'Rate limit' } }));
 
 function requireKey(req, res, next) {
   if (!API_KEY) return next();
@@ -26,42 +26,47 @@ function requireKey(req, res, next) {
 }
 
 app.get('/health', (req, res) => {
-  let ok = false;
-  try { ok = fs.existsSync(path.join(getRoot(), 'Prometheus-master', 'cli.lua')); } catch (e) {}
+  let engines = false;
+  try { engines = fs.existsSync(path.join(getRoot(), 'Prometheus-master', 'cli.lua')); } catch (e) {}
+  const lua = findLua();
+  const luac = findLuac();
   res.json({
-    ok: true,
+    ok: !!(lua && engines),
     product: 'QyrexOBF',
-    lua: findLua(),
-    luac: findLuac(),
-    enginesReady: ok,
+    fused: 'Prometheus Strong → Hercules → IronBrew2',
+    lua: lua,
+    luac: luac,
+    enginesReady: engines,
+    hint: lua ? null : 'lua5.1 missing — deploy with Dockerfile (Runtime: Docker on Render)',
     uptime: process.uptime()
   });
 });
 
 app.post('/obfuscate', requireKey, (req, res) => {
   try {
+    if (!findLua()) {
+      return res.status(500).json({
+        success: false,
+        error: 'QyrexOBF: lua5.1 no encontrado. En Render usa Runtime DOCKER (no Node). Abre /health para diagnosticar.'
+      });
+    }
     const source = (req.body && (req.body.source || req.body.code)) || '';
     if (!source || String(source).trim().length < 2) {
       return res.status(400).json({ success: false, error: 'Missing source' });
     }
-    if (source.length > 600000) {
+    if (source.length > 500000) {
       return res.status(400).json({ success: false, error: 'Source too large' });
     }
-    const options = {
-      mode: req.body.mode || req.body.engine || 'max',
-      preset: req.body.preset || 'Strong'
-    };
     const t0 = Date.now();
-    const result = obfuscate(source, options);
+    const result = obfuscate(source, {});
     res.json({
       success: true,
       product: 'QyrexOBF',
       timeMs: Date.now() - t0,
       originalSize: source.length,
       obfuscatedSize: result.code.length,
-      engine: result.engine,
+      engine: 'QyrexOBF',
       steps: result.steps || null,
-      warning: result.warning || null,
       code: result.code
     });
   } catch (err) {
@@ -73,15 +78,14 @@ app.post('/obfuscate', requireKey, (req, res) => {
 const indexPath = path.join(__dirname, 'index.html');
 app.get('/', (req, res) => {
   if (fs.existsSync(indexPath)) return res.sendFile(indexPath);
-  res.json({ product: 'QyrexOBF', endpoint: 'POST /obfuscate' });
+  res.json({ product: 'QyrexOBF' });
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log('QyrexOBF listening on :' + PORT);
-  try {
-    getRoot();
-    console.log('Engines ready · lua=', findLua(), 'luac=', findLuac());
-  } catch (e) {
-    console.error('Extract error:', e.message);
-  }
+  console.log('========== QyrexOBF ==========');
+  console.log('PORT', PORT);
+  console.log('lua ', findLua());
+  console.log('luac', findLuac());
+  try { getRoot(); console.log('engines extracted'); } catch (e) { console.error('extract', e.message); }
+  console.log('==============================');
 });

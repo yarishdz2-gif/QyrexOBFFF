@@ -13977,48 +13977,48 @@ function p() {
 }
 
 function findLua() {
-  const embedded = p('bin', 'lua5.1');
-  if (fs.existsSync(embedded)) {
+  const tries = [
+    '/usr/bin/lua5.1',
+    '/usr/local/bin/lua5.1',
+    '/usr/bin/lua',
+    '/usr/local/bin/lua',
+    path.join(getRoot(), 'bin', 'lua5.1')
+  ];
+  for (let i = 0; i < tries.length; i++) {
+    const c = tries[i];
     try {
-      execFileSync(embedded, ['-v'], { stdio: 'pipe', timeout: 5000 });
-      return embedded;
+      if (!fs.existsSync(c)) continue;
+      execFileSync(c, ['-v'], { stdio: 'pipe', timeout: 8000 });
+      return c;
     } catch (e) {}
   }
-  const list = ['/usr/bin/lua5.1', '/usr/bin/lua', 'lua5.1', 'lua'];
-  for (let i = 0; i < list.length; i++) {
-    const c = list[i];
-    if (c.charAt(0) === '/') {
-      if (fs.existsSync(c)) return c;
-      continue;
-    }
-    try {
-      const w = execSync('which ' + c, { encoding: 'utf8' }).trim();
-      if (w) return w;
-    } catch (e) {}
-  }
+  try {
+    const w = execSync('command -v lua5.1 || command -v lua || true', { encoding: 'utf8', shell: '/bin/bash' }).trim().split('\\n')[0];
+    if (w && fs.existsSync(w)) return w;
+  } catch (e) {}
   return null;
 }
 
 function findLuac() {
-  const embedded = p('bin', 'luac5.1');
-  if (fs.existsSync(embedded)) {
+  const tries = [
+    '/usr/bin/luac5.1',
+    '/usr/local/bin/luac5.1',
+    '/usr/bin/luac',
+    '/usr/local/bin/luac',
+    path.join(getRoot(), 'bin', 'luac5.1')
+  ];
+  for (let i = 0; i < tries.length; i++) {
+    const c = tries[i];
     try {
-      execFileSync(embedded, ['-v'], { stdio: 'pipe', timeout: 5000 });
-      return embedded;
+      if (!fs.existsSync(c)) continue;
+      execFileSync(c, ['-v'], { stdio: 'pipe', timeout: 8000 });
+      return c;
     } catch (e) {}
   }
-  const list = ['/usr/bin/luac5.1', '/usr/bin/luac', 'luac5.1', 'luac'];
-  for (let i = 0; i < list.length; i++) {
-    const c = list[i];
-    if (c.charAt(0) === '/') {
-      if (fs.existsSync(c)) return c;
-      continue;
-    }
-    try {
-      const w = execSync('which ' + c, { encoding: 'utf8' }).trim();
-      if (w) return w;
-    } catch (e) {}
-  }
+  try {
+    const w = execSync('command -v luac5.1 || command -v luac || true', { encoding: 'utf8', shell: '/bin/bash' }).trim().split('\\n')[0];
+    if (w && fs.existsSync(w)) return w;
+  } catch (e) {}
   return null;
 }
 
@@ -14094,32 +14094,21 @@ function runHercules(source) {
 function obfuscate(source, opts) {
   opts = opts || {};
   getRoot();
-  const mode = String(opts.mode || opts.engine || 'max').toLowerCase();
-  const preset = opts.preset || 'Strong';
-
-  if (mode === 'strong' || mode === 'prometheus') {
-    return { code: runPrometheus(source, preset), engine: 'QyrexOBF/Prometheus', preset: preset };
-  }
-  if (mode === 'ib2') {
-    return { code: runIB2(source), engine: 'QyrexOBF/IB2' };
-  }
-  if (mode === 'hercules') {
-    return { code: runHercules(source), engine: 'QyrexOBF/Hercules' };
-  }
-
-  // max / mega / default: fused
+  // QyrexOBF = ALWAYS fused: Prometheus Strong + Hercules (best effort) + IronBrew2
+  const steps = [];
   let code = runPrometheus(source, 'Strong');
-  const steps = ['Prometheus:Strong'];
+  steps.push('Prometheus:Strong');
+  try {
+    code = runHercules(code);
+    steps.push('Hercules');
+  } catch (e) {
+    steps.push('Hercules:skip');
+  }
   try {
     code = runIB2(code);
     steps.push('IronBrew2');
   } catch (e) {
-    return {
-      code: code,
-      engine: 'QyrexOBF',
-      steps: steps,
-      warning: 'IB2 skip: ' + e.message
-    };
+    steps.push('IronBrew2:skip');
   }
   return { code: code, engine: 'QyrexOBF', steps: steps };
 }
