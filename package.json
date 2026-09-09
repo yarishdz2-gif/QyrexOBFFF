@@ -1,7 +1,7 @@
 {
-  "name": "mega-lua-obfuscator",
+  "name": "qyrex-obf",
   "version": "2.0.0",
-  "description": "Prometheus + IronBrew2 + Hercules multi-engine Lua obfuscator for Render",
+  "description": "QyrexOBF — fused Prometheus + IronBrew2 + Hercules Lua obfuscator",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

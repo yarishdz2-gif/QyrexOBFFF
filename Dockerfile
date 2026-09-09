@@ -1,5 +1,6 @@
 FROM node:20-bookworm-slim
 
+# CRITICAL: Prometheus + IB2 need lua5.1 / luac
 RUN apt-get update && apt-get install -y --no-install-recommends \
     lua5.1 \
     && rm -rf /var/lib/apt/lists/*
