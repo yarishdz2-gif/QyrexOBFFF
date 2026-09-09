@@ -135,6 +135,26 @@ app.post('/obfuscate', requireKey, (req, res) => {
     children.set(id, child);
     writeMeta(id, { status: 'running', progress: 3, stage: 'spawn', pid: child.pid });
 
+    // Parent heartbeat: keeps UI moving even while worker is blocked in execFileSync
+    const beat = setInterval(() => {
+      try {
+        const m = readMeta(id);
+        if (!m || m.status === 'done' || m.status === 'error') {
+          clearInterval(beat);
+          return;
+        }
+        let p = typeof m.progress === 'number' ? m.progress : 5;
+        // creep forward slowly up to 92% while still running
+        if (p < 92) p = Math.min(92, p + 1);
+        writeMeta(id, {
+          progress: p,
+          elapsedMs: Date.now() - (m.createdAt || Date.now()),
+          heartbeat: Date.now()
+        });
+      } catch (_) {}
+    }, 1500);
+    child.on('close', () => { try { clearInterval(beat); } catch (_) {} });
+
     child.stdout.on('data', (buf) => {
       const line = String(buf).trim();
       if (line) console.log('[job ' + id.slice(0, 8) + ']', line);

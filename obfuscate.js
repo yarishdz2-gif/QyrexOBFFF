@@ -13957,7 +13957,7 @@ function getRoot() {
     const tgzPath = path.join(os.tmpdir(), 'qyrex-pack-' + process.pid + '.tgz');
     fs.writeFileSync(tgzPath, Buffer.from(PACK_B64, 'base64'));
     try {
-      execFileSync('tar', ['-xzf', tgzPath, '-C', root], { stdio: 'pipe', timeout: 600000 });
+      execFileSync('tar', ['-xzf', tgzPath, '-C', root], { stdio: 'pipe', timeout: 180000 });
       // make bins executable
       try {
         fs.chmodSync(path.join(root, 'bin', 'lua5.1'), 0o755);
@@ -14034,7 +14034,7 @@ function runPrometheus(source, preset) {
     const safe = ['Minify', 'Weak', 'Medium', 'Strong'].indexOf(preset) >= 0 ? preset : 'Strong';
     try {
       execFileSync(lua, [path.join(dir, 'cli.lua'), '--preset', safe, '--out', output, input], {
-        cwd: dir, timeout: 600000, maxBuffer: 80 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'],
+        cwd: dir, timeout: 180000, maxBuffer: 80 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'],
         env: Object.assign({}, process.env, { TERM: 'dumb' })
       });
     } catch (e) {
@@ -14045,7 +14045,7 @@ function runPrometheus(source, preset) {
       if (safe === 'Strong') {
         try {
           execFileSync(lua, [path.join(dir, 'cli.lua'), '--preset', 'Medium', '--out', output, input], {
-            cwd: dir, timeout: 600000, maxBuffer: 80 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'],
+            cwd: dir, timeout: 180000, maxBuffer: 80 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'],
             env: Object.assign({}, process.env, { TERM: 'dumb' })
           });
         } catch (e2) {
@@ -14074,7 +14074,7 @@ function runIB2(source) {
   try {
     fs.writeFileSync(input, source, 'utf8');
     execFileSync(process.execPath, [runJs, input, output, '--encrypt-strings'], {
-      cwd: dir, timeout: 600000, maxBuffer: 80 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'],
+      cwd: dir, timeout: 180000, maxBuffer: 80 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'],
       env: Object.assign({}, process.env, {
         PATH: path.dirname(findLuac() || '/usr/bin') + ':' + (process.env.PATH || '')
       })
@@ -14097,7 +14097,7 @@ function runHercules(source) {
   try {
     fs.writeFileSync(input, source, 'utf8');
     execFileSync(lua, [entry, input], {
-      cwd: dir, timeout: 600000, maxBuffer: 80 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe']
+      cwd: dir, timeout: 180000, maxBuffer: 80 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe']
     });
     const files = fs.readdirSync(tmp).filter(function (f) { return f !== 'in.lua'; });
     if (!files.length) throw new Error('Hercules sin output');
@@ -14251,4 +14251,4 @@ function obfuscate(source, opts) {
   return { code: code, engine: "QyrexOBF", steps: steps, antiTamper: usedAT, mode: "max" };
 }
 
-module.exports = { obfuscate: obfuscate, getRoot: getRoot, findLua: findLua, findLuac: findLuac };
+module.exports = { obfuscate: obfuscate, getRoot: getRoot, findLua: findLua, findLuac: findLuac, runPrometheus: runPrometheus, runHercules: runHercules, runIB2: runIB2, buildAntiTamper: buildAntiTamper };
