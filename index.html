@@ -586,11 +586,12 @@
 
         if (d.async && d.jobId) {
           const jobId = d.jobId;
-          $("logBox").textContent = "Job " + jobId + "\\nEsperando worker…";
+          $("logBox").textContent = "Job " + jobId + "\nPipeline MAX en memoria…";
           const t0 = Date.now();
           let emptyStreak = 0;
+          await new Promise((res) => setTimeout(res, 500));
           while (true) {
-            await new Promise((res) => setTimeout(res, 1200));
+            await new Promise((res) => setTimeout(res, 1000));
             let pd = null;
             try {
               const pr = await fetch("/job/" + encodeURIComponent(jobId), { headers });
