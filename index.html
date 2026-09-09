@@ -345,6 +345,40 @@
     }
     select#mode:focus { border-color: var(--border-h); }
 
+  
+    .progress-wrap {
+      display: none; margin-bottom: 18px; padding: 16px 18px;
+      border-radius: 14px; border: 1px solid var(--border);
+      background: var(--card); backdrop-filter: blur(12px);
+    }
+    .progress-wrap.show { display: block; }
+    .progress-head {
+      display: flex; justify-content: space-between; align-items: center;
+      gap: 12px; margin-bottom: 10px; flex-wrap: wrap;
+    }
+    .progress-head .stage {
+      font-size: 13px; font-weight: 700; color: #c4b5fd;
+    }
+    .progress-head .eta {
+      font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums;
+    }
+    .bar {
+      height: 10px; border-radius: 999px; background: rgba(255,255,255,0.06);
+      overflow: hidden; margin-bottom: 12px;
+    }
+    .bar > i {
+      display: block; height: 100%; width: 0%;
+      background: linear-gradient(90deg, var(--accent2), var(--accent3), #a78bfa);
+      border-radius: 999px; transition: width 0.4s ease;
+    }
+    .logbox {
+      max-height: 140px; overflow: auto;
+      font-family: 'JetBrains Mono', monospace; font-size: 11.5px;
+      line-height: 1.5; color: var(--muted);
+      background: rgba(0,0,0,0.25); border-radius: 10px;
+      padding: 10px 12px; white-space: pre-wrap;
+    }
+
   </style>
 </head>
 <body>
@@ -401,6 +435,14 @@
       <div class="status" id="st">Pega tu script Lua / Luau y pulsa Ofuscar</div>
     </div>
 
+    <div class="progress-wrap" id="progressWrap">
+      <div class="progress-head">
+        <span class="stage" id="progStage">Iniciando…</span>
+        <span class="eta" id="progEta">0%</span>
+      </div>
+      <div class="bar"><i id="progBar"></i></div>
+      <div class="logbox" id="logBox">Esperando logs…</div>
+    </div>
     <div class="error-box" id="errBox"></div>
 
     <div class="grid">
@@ -474,15 +516,48 @@
       btn.disabled = true;
       btn.classList.add("loading");
       st.className = "status warn";
-      st.textContent = "MAX en cola… AntiTamper → Prometheus Strong → Hercules → IronBrew2";
+      st.textContent = "MAX · iniciando job…";
       setStats({});
       $("errBox").classList.remove("show");
       $("errBox").textContent = "";
       $("out").value = "";
+      $("progressWrap").classList.add("show");
+      $("progBar").style.width = "2%";
+      $("progStage").textContent = "En cola…";
+      $("progEta").textContent = "0%";
+      $("logBox").textContent = "Creando job MAX…";
 
       const headers = { "Content-Type": "application/json" };
       const k = $("key").value.trim();
       if (k) headers["x-api-key"] = k;
+
+      function renderProgress(pd) {
+        const p = Math.max(0, Math.min(100, Number(pd.progress) || 0));
+        $("progBar").style.width = p + "%";
+        $("progEta").textContent = p + "%";
+        const stageMap = {
+          queued: "En cola",
+          spawn: "Arrancando worker",
+          boot: "Worker boot",
+          "extract-engines": "Cargando engines",
+          "read-source": "Leyendo source",
+          "max-pipeline": "MAX · Prometheus → Hercules → IronBrew2",
+          done: "Completado",
+          error: "Error",
+          running: "Ejecutando"
+        };
+        const stage = stageMap[pd.stage] || pd.stage || "…";
+        const sec = pd.elapsedMs != null ? Math.round(pd.elapsedMs / 1000) : null;
+        $("progStage").textContent = stage + (sec != null ? (" · " + sec + "s") : "");
+        if (Array.isArray(pd.logs) && pd.logs.length) {
+          $("logBox").textContent = pd.logs.join("\\n");
+          $("logBox").scrollTop = $("logBox").scrollHeight;
+        } else if (pd.lastLog) {
+          $("logBox").textContent = pd.lastLog;
+        }
+        st.className = "status warn";
+        st.textContent = "MAX · " + stage + (sec != null ? (" · " + sec + "s") : "");
+      }
 
       try {
         const r = await fetch("/obfuscate", {
@@ -499,34 +574,44 @@
         try {
           d = rawText ? JSON.parse(rawText) : null;
         } catch (_) {
-          throw new Error(
-            rawText
-              ? rawText.slice(0, 400)
-              : ("Respuesta vacía (status " + r.status + ")")
-          );
+          throw new Error(rawText ? rawText.slice(0, 400) : ("Respuesta vacía status " + r.status));
         }
-        if (!d) throw new Error("Respuesta vacía (status " + r.status + ")");
-        if (!d.success && !d.jobId) throw new Error(d.error || "Error al iniciar job");
+        if (!d) throw new Error("Respuesta vacía status " + r.status);
+        if (!d.success && !d.jobId) throw new Error(d.error || "No se pudo iniciar el job");
 
-        // Async job path
         if (d.async && d.jobId) {
           const jobId = d.jobId;
-          st.textContent = "MAX corriendo… job " + jobId.slice(0, 8) + " (puede tardar 1–3 min)";
-          const tPoll0 = Date.now();
+          $("logBox").textContent = "Job " + jobId + "\\nEsperando worker…";
+          const t0 = Date.now();
+          let emptyStreak = 0;
           while (true) {
-            await new Promise((res) => setTimeout(res, 1500));
-            const pr = await fetch("/job/" + encodeURIComponent(jobId), { headers });
-            const ptxt = await pr.text();
-            let pd;
+            await new Promise((res) => setTimeout(res, 1200));
+            let pd = null;
             try {
-              pd = ptxt ? JSON.parse(ptxt) : null;
-            } catch (_) {
-              throw new Error("Poll inválido: " + (ptxt || pr.status).toString().slice(0, 300));
+              const pr = await fetch("/job/" + encodeURIComponent(jobId), { headers });
+              const ptxt = await pr.text();
+              if (!ptxt || !ptxt.trim()) {
+                emptyStreak++;
+                $("logBox").textContent += "\\n(poll vacío #" + emptyStreak + " status " + pr.status + ")";
+                if (emptyStreak >= 8) throw new Error("Poll vacío repetido — el worker o el host se cayó. Revisa logs de Render.");
+                continue;
+              }
+              emptyStreak = 0;
+              pd = JSON.parse(ptxt);
+            } catch (pe) {
+              if (String(pe.message || pe).includes("Poll vacío")) throw pe;
+              emptyStreak++;
+              if (emptyStreak >= 8) throw new Error("No se pudo consultar el job: " + (pe.message || pe));
+              continue;
             }
-            if (!pd) throw new Error("Poll vacío");
+
+            renderProgress(Object.assign({ elapsedMs: Date.now() - t0 }, pd));
 
             if (pd.code && pd.success) {
               $("out").value = pd.code;
+              $("progBar").style.width = "100%";
+              $("progEta").textContent = "100%";
+              $("progStage").textContent = "Completado";
               st.className = "status ok";
               st.textContent = "MAX listo · " + (pd.steps ? pd.steps.join(" → ") : "QyrexOBF");
               setStats(pd);
@@ -536,21 +621,17 @@
             if (pd.success === false || pd.status === "error") {
               throw new Error(pd.error || "Job falló");
             }
-            // still running
-            const sec = Math.round((Date.now() - tPoll0) / 1000);
-            st.className = "status warn";
-            st.textContent = "MAX en progreso… " + sec + "s · " + (pd.status || "running");
-            if (Date.now() - tPoll0 > 15 * 60 * 1000) {
-              throw new Error("Timeout 15 min — el job sigue en el servidor, reintenta más tarde");
+            if (Date.now() - t0 > 20 * 60 * 1000) {
+              throw new Error("Timeout 20 min");
             }
           }
         } else if (d.code) {
-          // sync fallback
           $("out").value = d.code;
           st.className = "status ok";
-          st.textContent = "MAX listo · " + (d.steps ? d.steps.join(" → ") : "QyrexOBF");
+          st.textContent = "MAX listo";
           setStats(d);
-          toast("Ofuscación MAX completada");
+          $("progressWrap").classList.remove("show");
+          toast("Listo");
         } else {
           throw new Error(d.error || "Respuesta inesperada");
         }
@@ -560,7 +641,7 @@
         st.textContent = "Error de ofuscación";
         $("errBox").textContent = msg;
         $("errBox").classList.add("show");
-        toast("Error: revisa el detalle");
+        toast("Error");
       } finally {
         btn.disabled = false;
         btn.classList.remove("loading");

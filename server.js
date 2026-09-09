@@ -6,8 +6,10 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const crypto = require('crypto');
-const { obfuscate, findLua, findLuac, getRoot } = require('./obfuscate');
+const { spawn } = require('child_process');
+const { findLua, findLuac, getRoot } = require('./obfuscate');
 
 function stripAnsi(str) {
   return String(str || '')
@@ -21,18 +23,10 @@ function stripAnsi(str) {
 const app = express();
 const PORT = process.env.PORT || 10000;
 const API_KEY = process.env.API_KEY || '';
+const JOB_ROOT = path.join(os.tmpdir(), 'qyrex-jobs');
+try { fs.mkdirSync(JOB_ROOT, { recursive: true }); } catch (_) {}
 
-// In-memory jobs (single instance). Survives long MAX runs without proxy 502.
-const jobs = new Map();
-const JOB_TTL_MS = 30 * 60 * 1000;
-
-function cleanJobs() {
-  const now = Date.now();
-  for (const [id, j] of jobs) {
-    if (now - j.createdAt > JOB_TTL_MS) jobs.delete(id);
-  }
-}
-setInterval(cleanJobs, 60000).unref();
+const children = new Map(); // jobId -> ChildProcess
 
 process.on('uncaughtException', (err) => {
   console.error('[QyrexOBF] uncaughtException', stripAnsi(err && err.message));
@@ -47,7 +41,7 @@ app.use(cors({ origin: true }));
 app.use(express.json({ limit: '32mb' }));
 app.use(rateLimit({
   windowMs: 60000,
-  max: 40,
+  max: 60,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, error: 'Rate limit — espera un momento' }
@@ -60,78 +54,44 @@ function requireKey(req, res, next) {
   return res.status(401).json({ success: false, error: 'Invalid API key' });
 }
 
+function jobDir(id) { return path.join(JOB_ROOT, id); }
+function metaPath(id) { return path.join(jobDir(id), 'meta.json'); }
+function inPath(id) { return path.join(jobDir(id), 'in.lua'); }
+function outPath(id) { return path.join(jobDir(id), 'out.lua'); }
+
+function readMeta(id) {
+  try {
+    return JSON.parse(fs.readFileSync(metaPath(id), 'utf8'));
+  } catch (_) {
+    return null;
+  }
+}
+
+function writeMeta(id, patch) {
+  const cur = readMeta(id) || {};
+  const next = Object.assign({}, cur, patch, { updatedAt: Date.now() });
+  fs.writeFileSync(metaPath(id), JSON.stringify(next), 'utf8');
+  return next;
+}
+
 app.get('/health', (req, res) => {
   let engines = false;
   try { engines = fs.existsSync(path.join(getRoot(), 'Prometheus-master', 'cli.lua')); } catch (e) {}
-  const lua = findLua();
-  const luac = findLuac();
   res.json({
-    ok: !!(lua && engines),
+    ok: !!(findLua() && engines),
     product: 'QyrexOBF v2',
     fused: 'AntiTamper → Prometheus Strong → Hercules → IronBrew2',
     mode: 'max',
     async: true,
-    lua: lua,
-    luac: luac,
+    worker: true,
+    lua: findLua(),
+    luac: findLuac(),
     enginesReady: engines,
-    jobs: jobs.size,
-    hint: lua ? null : 'lua5.1 missing — deploy with Dockerfile (Runtime: Docker on Render)',
+    activeJobs: children.size,
     uptime: process.uptime()
   });
 });
 
-function startJob(source, opts) {
-  const id = crypto.randomBytes(12).toString('hex');
-  const job = {
-    id,
-    status: 'queued', // queued | running | done | error
-    createdAt: Date.now(),
-    startedAt: null,
-    finishedAt: null,
-    error: null,
-    result: null
-  };
-  jobs.set(id, job);
-
-  setImmediate(() => {
-    const j = jobs.get(id);
-    if (!j) return;
-    j.status = 'running';
-    j.startedAt = Date.now();
-    try {
-      if (!findLua()) {
-        throw new Error('QyrexOBF: lua5.1 no encontrado. En Render usa Runtime DOCKER.');
-      }
-      const result = obfuscate(source, opts || {});
-      if (!result || typeof result.code !== 'string' || !result.code.length) {
-        throw new Error('QyrexOBF no generó output');
-      }
-      j.status = 'done';
-      j.finishedAt = Date.now();
-      j.result = {
-        success: true,
-        product: 'QyrexOBF v2',
-        timeMs: j.finishedAt - j.startedAt,
-        originalSize: source.length,
-        obfuscatedSize: result.code.length,
-        engine: 'QyrexOBF',
-        steps: result.steps || null,
-        antiTamper: !!result.antiTamper,
-        mode: 'max',
-        code: result.code
-      };
-    } catch (err) {
-      j.status = 'error';
-      j.finishedAt = Date.now();
-      j.error = stripAnsi(err && (err.message || String(err))) || 'Obfuscation failed';
-      console.error('[QyrexOBF] job', id, j.error);
-    }
-  });
-
-  return id;
-}
-
-// Start MAX obfuscation (async — avoids 502 on long runs)
 app.post('/obfuscate', requireKey, (req, res) => {
   try {
     const source = (req.body && (req.body.source || req.body.code)) || '';
@@ -144,54 +104,144 @@ app.post('/obfuscate', requireKey, (req, res) => {
     if (!findLua()) {
       return res.status(500).json({
         success: false,
-        error: 'QyrexOBF: lua5.1 no encontrado. En Render usa Runtime DOCKER (no Node). Abre /health.'
+        error: 'QyrexOBF: lua5.1 no encontrado. Usa Runtime DOCKER en Render.'
       });
     }
+
+    const id = crypto.randomBytes(12).toString('hex');
+    fs.mkdirSync(jobDir(id), { recursive: true });
+    fs.writeFileSync(inPath(id), String(source), 'utf8');
 
     const opts = { antiTamper: true, mode: 'max' };
     if (req.body && req.body.antiTamper === false) opts.antiTamper = false;
 
-    const jobId = startJob(String(source), opts);
+    writeMeta(id, {
+      id,
+      status: 'queued',
+      progress: 0,
+      stage: 'queued',
+      createdAt: Date.now(),
+      logs: ['[' + new Date().toISOString().slice(11, 19) + '] Job creado'],
+      opts,
+      error: null
+    });
+
+    const workerPath = path.join(__dirname, 'worker.js');
+    const child = spawn(process.execPath, [workerPath, id, inPath(id), metaPath(id)], {
+      cwd: __dirname,
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    children.set(id, child);
+    writeMeta(id, { status: 'running', progress: 3, stage: 'spawn', pid: child.pid });
+
+    child.stdout.on('data', (buf) => {
+      const line = String(buf).trim();
+      if (line) console.log('[job ' + id.slice(0, 8) + ']', line);
+    });
+    child.stderr.on('data', (buf) => {
+      const line = stripAnsi(String(buf).trim());
+      if (!line) return;
+      console.error('[job ' + id.slice(0, 8) + ' err]', line);
+      try {
+        const m = readMeta(id) || {};
+        const logs = Array.isArray(m.logs) ? m.logs.slice(-40) : [];
+        logs.push('[' + new Date().toISOString().slice(11, 19) + '] ' + line.slice(0, 300));
+        writeMeta(id, { logs, lastLog: line.slice(0, 300) });
+      } catch (_) {}
+    });
+    child.on('exit', (code) => {
+      children.delete(id);
+      const m = readMeta(id) || {};
+      if (m.status !== 'done' && m.status !== 'error') {
+        writeMeta(id, {
+          status: code === 0 ? 'done' : 'error',
+          progress: 100,
+          error: code === 0 ? null : ('Worker exit code ' + code),
+          stage: code === 0 ? 'done' : 'error'
+        });
+      }
+      console.log('[job ' + id.slice(0, 8) + '] exit', code);
+    });
+
     return res.status(202).json({
       success: true,
       async: true,
-      jobId,
+      jobId: id,
       status: 'queued',
       mode: 'max',
-      message: 'Ofuscación MAX en segundo plano. Consulta /job/' + jobId
+      message: 'MAX job iniciado'
     });
   } catch (err) {
-    return res.status(500).json({
-      success: false,
-      error: stripAnsi(err && err.message) || 'fail'
-    });
+    return res.status(500).json({ success: false, error: stripAnsi(err && err.message) || 'fail' });
   }
 });
 
-// Poll job status / result
 app.get('/job/:id', requireKey, (req, res) => {
-  const j = jobs.get(req.params.id);
-  if (!j) {
-    return res.status(404).json({ success: false, error: 'Job no encontrado o expirado' });
+  const id = req.params.id;
+  const m = readMeta(id);
+  if (!m) {
+    return res.status(404).json({ success: false, error: 'Job no encontrado o expirado', status: 'missing' });
   }
-  if (j.status === 'done' && j.result) {
-    return res.json(j.result);
-  }
-  if (j.status === 'error') {
-    return res.status(500).json({
-      success: false,
-      status: 'error',
-      error: j.error || 'fail',
-      timeMs: j.finishedAt && j.startedAt ? (j.finishedAt - j.startedAt) : null
+
+  // Always return JSON — never empty
+  if (m.status === 'done') {
+    let code = '';
+    try {
+      const op = m.outPath || outPath(id);
+      if (fs.existsSync(op)) code = fs.readFileSync(op, 'utf8');
+    } catch (_) {}
+    if (!code) {
+      return res.status(500).json({
+        success: false,
+        status: 'error',
+        error: 'Job done pero sin archivo out.lua',
+        logs: m.logs || [],
+        progress: 100
+      });
+    }
+    return res.json({
+      success: true,
+      status: 'done',
+      progress: 100,
+      stage: 'done',
+      product: 'QyrexOBF v2',
+      timeMs: m.elapsedMs || null,
+      originalSize: m.originalSize || null,
+      obfuscatedSize: m.obfuscatedSize || code.length,
+      engine: 'QyrexOBF',
+      steps: m.steps || null,
+      antiTamper: !!m.antiTamper,
+      mode: 'max',
+      logs: m.logs || [],
+      code
     });
   }
+
+  if (m.status === 'error') {
+    return res.status(200).json({
+      success: false,
+      status: 'error',
+      progress: 100,
+      stage: 'error',
+      error: m.error || 'fail',
+      logs: m.logs || [],
+      elapsedMs: m.elapsedMs || null
+    });
+  }
+
+  // running / queued
   return res.json({
     success: true,
     async: true,
-    jobId: j.id,
-    status: j.status,
-    mode: 'max',
-    elapsedMs: Date.now() - (j.startedAt || j.createdAt)
+    jobId: id,
+    status: m.status || 'running',
+    progress: typeof m.progress === 'number' ? m.progress : 0,
+    stage: m.stage || 'running',
+    logs: m.logs || [],
+    lastLog: m.lastLog || null,
+    elapsedMs: m.createdAt ? (Date.now() - m.createdAt) : null,
+    mode: 'max'
   });
 });
 
@@ -206,11 +256,10 @@ app.use((req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log('========== QyrexOBF MAX ==========');
+  console.log('========== QyrexOBF MAX ==========' );
   console.log('PORT', PORT);
-  console.log('mode MAX async jobs');
+  console.log('async worker jobs ·', JOB_ROOT);
   console.log('lua ', findLua());
-  console.log('luac', findLuac());
   try { getRoot(); console.log('engines extracted'); } catch (e) { console.error('extract', e.message); }
   console.log('==================================');
 });
