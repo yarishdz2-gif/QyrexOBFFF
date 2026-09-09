@@ -555,7 +555,7 @@
         const sec = pd.elapsedMs != null ? Math.round(pd.elapsedMs / 1000) : null;
         $("progStage").textContent = stage + (sec != null ? (" · " + sec + "s") : "");
         if (Array.isArray(pd.logs) && pd.logs.length) {
-          $("logBox").textContent = pd.logs.join("\\n");
+          $("logBox").textContent = pd.logs.join(String.fromCharCode(10));
           $("logBox").scrollTop = $("logBox").scrollHeight;
         } else if (pd.lastLog) {
           $("logBox").textContent = pd.lastLog;
@@ -625,7 +625,10 @@
               break;
             }
             if (pd.success === false || pd.status === "error") {
-              throw new Error(pd.error || "Job falló");
+              if ((pd.error || "").includes("no encontrado") || pd.status === "missing") {
+              throw new Error((pd.error || "Job perdido") + " — el host reinició el proceso (RAM/timeout). Reintenta; si pasa siempre usa el bot Discord.");
+            }
+            throw new Error(pd.error || "Job falló");
             }
             if (Date.now() - t0 > 20 * 60 * 1000) {
               throw new Error("Timeout 20 min");

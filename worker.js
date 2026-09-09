@@ -23,6 +23,9 @@ function save(patch) {
     logs.push('[' + new Date().toISOString().slice(11, 19) + '] ' + patch.logLine);
     delete patch.logLine;
   }
+  if (typeof cur.progress === "number" && typeof patch.progress === "number") {
+    patch.progress = Math.max(cur.progress, patch.progress);
+  }
   const next = Object.assign({}, cur, patch, {
     logs,
     lastLog: logs.length ? logs[logs.length - 1] : cur.lastLog,

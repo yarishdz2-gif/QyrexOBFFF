@@ -15,7 +15,7 @@ WORKDIR /app
 COPY package.json ./
 RUN npm install --omit=dev
 
-COPY server.js obfuscate.js worker.js index.html ./
+COPY server.js obfuscate.js worker.js index.html bot.js ./
 RUN mkdir -p /app/jobs && chmod 777 /app/jobs
 
 ENV NODE_ENV=production
@@ -24,4 +24,5 @@ ENV PATH="/usr/local/bin:/usr/bin:${PATH}"
 
 EXPOSE 10000
 
+# Default = web. For Discord bot set Docker CMD override: node bot.js
 CMD ["sh", "-c", "mkdir -p /app/jobs && echo [QyrexOBF] lua=$(which lua5.1) && lua5.1 -v && node server.js"]
