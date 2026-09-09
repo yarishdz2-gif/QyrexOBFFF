@@ -522,9 +522,9 @@
       $("errBox").textContent = "";
       $("out").value = "";
       $("progressWrap").classList.add("show");
-      $("progBar").style.width = "2%";
+      $("progBar").style.width = "3%";
       $("progStage").textContent = "En cola…";
-      $("progEta").textContent = "0%";
+      $("progEta").textContent = "3%";
       $("logBox").textContent = "Creando job MAX…";
 
       const headers = { "Content-Type": "application/json" };
@@ -532,7 +532,7 @@
       if (k) headers["x-api-key"] = k;
 
       function renderProgress(pd) {
-        const p = Math.max(0, Math.min(100, Number(pd.progress) || 0));
+        const p = Math.max(1, Math.min(100, Number(pd.progress) || 1));
         $("progBar").style.width = p + "%";
         $("progEta").textContent = p + "%";
         const stageMap = {

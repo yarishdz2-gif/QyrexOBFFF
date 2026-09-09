@@ -6,13 +6,9 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
 const fs = require('fs');
-const os = require('os');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
-const {
-  obfuscate, findLua, findLuac, getRoot,
-  runPrometheus, runHercules, runIB2, buildAntiTamper
-} = require('./obfuscate');
+const { findLua, findLuac, getRoot } = require('./obfuscate');
 
 function stripAnsi(str) {
   return String(str || '')
@@ -26,66 +22,41 @@ function stripAnsi(str) {
 const app = express();
 const PORT = process.env.PORT || 10000;
 const API_KEY = process.env.API_KEY || '';
-
-// Prefer app-local jobs dir (survives better than random tmp on some hosts)
-const JOB_ROOT = process.env.QYREX_JOBS || path.join(__dirname, 'jobs');
+const JOB_ROOT = path.join(__dirname, 'jobs');
 try { fs.mkdirSync(JOB_ROOT, { recursive: true }); } catch (_) {}
 
-/** @type {Map<string, any>} */
-const MEM = new Map();
+const children = new Map();
 
-function now() { return Date.now(); }
-
-function saveMem(id, patch) {
-  const cur = MEM.get(id) || { id, createdAt: now(), logs: [] };
-  const next = Object.assign({}, cur, patch, { updatedAt: now() });
-  if (patch && patch.logLine) {
-    const logs = Array.isArray(next.logs) ? next.logs.slice(-60) : [];
+function metaPath(id) { return path.join(JOB_ROOT, id, 'meta.json'); }
+function readMeta(id) {
+  try { return JSON.parse(fs.readFileSync(metaPath(id), 'utf8')); } catch (_) { return null; }
+}
+function writeMeta(id, patch) {
+  const dir = path.join(JOB_ROOT, id);
+  fs.mkdirSync(dir, { recursive: true });
+  const cur = readMeta(id) || { id, logs: [], createdAt: Date.now() };
+  const logs = Array.isArray(cur.logs) ? cur.logs.slice(-80) : [];
+  if (patch.logLine) {
     logs.push('[' + new Date().toISOString().slice(11, 19) + '] ' + patch.logLine);
-    next.logs = logs;
-    next.lastLog = logs[logs.length - 1];
-    delete next.logLine;
+    delete patch.logLine;
   }
-  MEM.set(id, next);
-  // disk mirror (best-effort)
-  try {
-    const dir = path.join(JOB_ROOT, id);
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify(next), 'utf8');
-  } catch (_) {}
+  const next = Object.assign({}, cur, patch, {
+    logs,
+    lastLog: logs.length ? logs[logs.length - 1] : cur.lastLog,
+    updatedAt: Date.now()
+  });
+  fs.writeFileSync(metaPath(id), JSON.stringify(next), 'utf8');
   return next;
 }
 
-function loadJob(id) {
-  if (MEM.has(id)) return MEM.get(id);
-  try {
-    const raw = fs.readFileSync(path.join(JOB_ROOT, id, 'meta.json'), 'utf8');
-    const j = JSON.parse(raw);
-    MEM.set(id, j);
-    return j;
-  } catch (_) {
-    return null;
-  }
-}
-
-process.on('uncaughtException', (err) => {
-  console.error('[QyrexOBF] uncaughtException', stripAnsi(err && err.message));
-});
-process.on('unhandledRejection', (err) => {
-  console.error('[QyrexOBF] unhandledRejection', stripAnsi(err && (err.message || String(err))));
-});
+process.on('uncaughtException', (e) => console.error('[QyrexOBF]', e && e.message));
+process.on('unhandledRejection', (e) => console.error('[QyrexOBF]', e));
 
 app.set('trust proxy', 1);
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: '32mb' }));
-app.use(rateLimit({
-  windowMs: 60000,
-  max: 80,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { success: false, error: 'Rate limit' }
-}));
+app.use(rateLimit({ windowMs: 60000, max: 100, message: { success: false, error: 'Rate limit' } }));
 
 function requireKey(req, res, next) {
   if (!API_KEY) return next();
@@ -101,109 +72,13 @@ app.get('/health', (req, res) => {
     ok: !!(findLua() && engines),
     product: 'QyrexOBF v2',
     mode: 'max',
-    async: true,
-    jobsInMemory: MEM.size,
     jobRoot: JOB_ROOT,
+    activeChildren: children.size,
     lua: findLua(),
     enginesReady: engines,
     uptime: process.uptime()
   });
 });
-
-function runMaxInProcess(id, source, opts) {
-  const t0 = now();
-  const steps = [];
-  try {
-    saveMem(id, { status: 'running', progress: 5, stage: 'boot', logLine: 'In-process MAX start' });
-    if (!findLua()) throw new Error('lua5.1 no encontrado');
-    saveMem(id, { progress: 10, stage: 'extract-engines', logLine: 'Extrayendo engines…' });
-    getRoot();
-    saveMem(id, { progress: 18, stage: 'read-source', logLine: 'Source ' + source.length + ' bytes' });
-
-    let code = source;
-    if (opts.antiTamper !== false) {
-      saveMem(id, { progress: 22, stage: 'antitamper', logLine: 'AntiTamper v2…' });
-      try {
-        code = buildAntiTamper() + '\n' + source;
-        steps.push('AntiTamper:v2');
-        saveMem(id, { logLine: 'AntiTamper OK' });
-      } catch (e) {
-        steps.push('AntiTamper:skip');
-        code = source;
-        saveMem(id, { logLine: 'AntiTamper skip: ' + (e.message || e) });
-      }
-    }
-
-    saveMem(id, { progress: 30, stage: 'prometheus', logLine: 'Prometheus Strong…' });
-    try {
-      code = runPrometheus(code, 'Strong');
-      steps.push('Prometheus:Strong');
-      saveMem(id, { progress: 55, logLine: 'Prometheus Strong OK · ' + code.length + ' B' });
-    } catch (e1) {
-      saveMem(id, { progress: 40, stage: 'prometheus-medium', logLine: 'Strong falló, Medium…' });
-      try {
-        code = runPrometheus(code, 'Medium');
-        steps.push('Prometheus:Medium');
-        saveMem(id, { progress: 55, logLine: 'Prometheus Medium OK' });
-      } catch (e2) {
-        code = runPrometheus(source, 'Medium');
-        steps.push('Prometheus:Medium:clean');
-        saveMem(id, { progress: 55, logLine: 'Prometheus Medium clean OK' });
-      }
-    }
-
-    saveMem(id, { progress: 65, stage: 'hercules', logLine: 'Hercules…' });
-    try {
-      code = runHercules(code);
-      steps.push('Hercules');
-      saveMem(id, { progress: 80, logLine: 'Hercules OK · ' + code.length + ' B' });
-    } catch (e) {
-      steps.push('Hercules:skip');
-      saveMem(id, { logLine: 'Hercules skip' });
-    }
-
-    saveMem(id, { progress: 85, stage: 'ironbrew2', logLine: 'IronBrew2…' });
-    try {
-      code = runIB2(code);
-      steps.push('IronBrew2');
-      saveMem(id, { progress: 95, logLine: 'IronBrew2 OK · ' + code.length + ' B' });
-    } catch (e) {
-      steps.push('IronBrew2:skip');
-      saveMem(id, { logLine: 'IronBrew2 skip' });
-    }
-
-    if (!code || !code.length) throw new Error('Sin output');
-    const header = '--QyrexObf [qyrex.hopto.org]\n';
-    if (!code.startsWith('--QyrexObf')) code = header + code;
-
-    try {
-      fs.mkdirSync(path.join(JOB_ROOT, id), { recursive: true });
-      fs.writeFileSync(path.join(JOB_ROOT, id, 'out.lua'), code, 'utf8');
-    } catch (_) {}
-
-    saveMem(id, {
-      status: 'done',
-      progress: 100,
-      stage: 'done',
-      steps,
-      code,
-      antiTamper: steps.indexOf('AntiTamper:v2') >= 0,
-      originalSize: source.length,
-      obfuscatedSize: code.length,
-      elapsedMs: now() - t0,
-      logLine: 'DONE en ' + Math.round((now() - t0) / 1000) + 's · ' + steps.join(' → ')
-    });
-  } catch (err) {
-    saveMem(id, {
-      status: 'error',
-      progress: 100,
-      stage: 'error',
-      error: stripAnsi(err && (err.message || String(err))).slice(0, 2000),
-      elapsedMs: now() - t0,
-      logLine: 'ERROR: ' + stripAnsi(err && err.message)
-    });
-  }
-}
 
 app.post('/obfuscate', requireKey, (req, res) => {
   try {
@@ -212,44 +87,85 @@ app.post('/obfuscate', requireKey, (req, res) => {
       return res.status(400).json({ success: false, error: 'Missing source' });
     }
     if (source.length > 8000000) {
-      return res.status(400).json({ success: false, error: 'Source too large (max ~8MB)' });
+      return res.status(400).json({ success: false, error: 'Source too large' });
     }
     if (!findLua()) {
-      return res.status(500).json({
-        success: false,
-        error: 'lua5.1 no encontrado. Usa Runtime DOCKER en Render.'
-      });
+      return res.status(500).json({ success: false, error: 'lua5.1 no encontrado — Runtime DOCKER' });
     }
 
     const id = crypto.randomBytes(12).toString('hex');
+    const dir = path.join(JOB_ROOT, id);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'in.lua'), String(source), 'utf8');
+
     const opts = { antiTamper: true, mode: 'max' };
     if (req.body && req.body.antiTamper === false) opts.antiTamper = false;
 
-    // Store IMMEDIATELY in memory so first poll never 404s
-    saveMem(id, {
+    // Write meta BEFORE responding so poll never 404s
+    writeMeta(id, {
       id,
       status: 'queued',
-      progress: 1,
+      progress: 2,
       stage: 'queued',
-      createdAt: now(),
-      logs: ['[' + new Date().toISOString().slice(11, 19) + '] Job creado en memoria'],
+      createdAt: Date.now(),
       opts,
-      error: null
+      error: null,
+      logLine: 'Job creado · esperando worker'
     });
 
-    // Run in-process on next tick (same instance = poll always finds job)
-    setImmediate(() => {
-      saveMem(id, { status: 'running', progress: 3, stage: 'boot', logLine: 'Arrancando pipeline MAX' });
-      runMaxInProcess(id, String(source), opts);
+    const workerJs = path.join(__dirname, 'worker.js');
+    const child = spawn(process.execPath, [workerJs, dir], {
+      cwd: __dirname,
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: false
+    });
+    children.set(id, child);
+    writeMeta(id, { status: 'running', progress: 4, stage: 'spawn', pid: child.pid, logLine: 'Worker PID ' + child.pid });
+
+    // Parent heartbeat while child blocked in lua — UI keeps moving
+    const beat = setInterval(() => {
+      const m = readMeta(id);
+      if (!m || m.status === 'done' || m.status === 'error') {
+        clearInterval(beat);
+        return;
+      }
+      let p = typeof m.progress === 'number' ? m.progress : 4;
+      if (p < 88) p += 1;
+      writeMeta(id, {
+        progress: p,
+        elapsedMs: Date.now() - (m.createdAt || Date.now()),
+        heartbeat: Date.now()
+      });
+    }, 2000);
+
+    child.stdout.on('data', (b) => {
+      const line = String(b).trim();
+      if (line) console.log('[w ' + id.slice(0, 8) + ']', line);
+    });
+    child.stderr.on('data', (b) => {
+      const line = stripAnsi(String(b).trim());
+      if (!line) return;
+      console.error('[w ' + id.slice(0, 8) + ']', line);
+      writeMeta(id, { logLine: line.slice(0, 240) });
+    });
+    child.on('exit', (code) => {
+      clearInterval(beat);
+      children.delete(id);
+      const m = readMeta(id) || {};
+      if (m.status !== 'done' && m.status !== 'error') {
+        writeMeta(id, {
+          status: code === 0 ? 'done' : 'error',
+          progress: 100,
+          stage: code === 0 ? 'done' : 'error',
+          error: code === 0 ? null : ('Worker exit ' + code),
+          logLine: 'Worker exit ' + code
+        });
+      }
+      console.log('[w ' + id.slice(0, 8) + '] exit', code);
     });
 
-    return res.status(202).json({
-      success: true,
-      async: true,
-      jobId: id,
-      status: 'queued',
-      mode: 'max'
-    });
+    return res.status(202).json({ success: true, async: true, jobId: id, status: 'queued', mode: 'max' });
   } catch (err) {
     return res.status(500).json({ success: false, error: stripAnsi(err && err.message) || 'fail' });
   }
@@ -257,128 +173,86 @@ app.post('/obfuscate', requireKey, (req, res) => {
 
 app.get('/job/:id', requireKey, (req, res) => {
   const id = String(req.params.id || '').trim();
-  const j = loadJob(id);
-  if (!j) {
+  const m = readMeta(id);
+  if (!m) {
     return res.status(404).json({
       success: false,
       status: 'missing',
-      error: 'Job no encontrado. ¿Redeploy a mitad? Vuelve a pulsar Ofuscar.',
-      memoryJobs: MEM.size,
+      error: 'Job no encontrado. Vuelve a Ofuscar (¿redeploy a mitad?).',
       lookedFor: id
     });
   }
 
-  const elapsedMs = j.createdAt ? (now() - j.createdAt) : j.elapsedMs;
+  const elapsedMs = m.createdAt ? (Date.now() - m.createdAt) : (m.elapsedMs || null);
 
-  if (j.status === 'done' && j.code) {
+  if (m.status === 'done') {
+    let code = '';
+    try {
+      const op = m.outPath || path.join(JOB_ROOT, id, 'out.lua');
+      code = fs.readFileSync(op, 'utf8');
+    } catch (_) {}
+    if (!code) {
+      return res.json({
+        success: false,
+        status: 'error',
+        error: 'Done pero sin out.lua',
+        logs: m.logs || [],
+        progress: 100
+      });
+    }
     return res.json({
       success: true,
       status: 'done',
       progress: 100,
       stage: 'done',
       product: 'QyrexOBF v2',
-      timeMs: j.elapsedMs || elapsedMs,
-      originalSize: j.originalSize,
-      obfuscatedSize: j.obfuscatedSize || j.code.length,
-      engine: 'QyrexOBF',
-      steps: j.steps || null,
-      antiTamper: !!j.antiTamper,
+      timeMs: m.elapsedMs || elapsedMs,
+      originalSize: m.originalSize,
+      obfuscatedSize: m.obfuscatedSize || code.length,
+      steps: m.steps || null,
+      antiTamper: !!m.antiTamper,
       mode: 'max',
-      logs: j.logs || [],
-      code: j.code
+      logs: m.logs || [],
+      code
     });
   }
 
-  if (j.status === 'done' && !j.code) {
-    // try disk
-    try {
-      const code = fs.readFileSync(path.join(JOB_ROOT, id, 'out.lua'), 'utf8');
-      j.code = code;
-      MEM.set(id, j);
-      return res.json({
-        success: true,
-        status: 'done',
-        progress: 100,
-        stage: 'done',
-        timeMs: j.elapsedMs || elapsedMs,
-        originalSize: j.originalSize,
-        obfuscatedSize: code.length,
-        steps: j.steps || null,
-        mode: 'max',
-        logs: j.logs || [],
-        code
-      });
-    } catch (_) {
-      return res.json({
-        success: false,
-        status: 'error',
-        error: 'Job done sin código',
-        logs: j.logs || []
-      });
-    }
-  }
-
-  if (j.status === 'error') {
+  if (m.status === 'error') {
     return res.json({
       success: false,
       status: 'error',
       progress: 100,
       stage: 'error',
-      error: j.error || 'fail',
-      logs: j.logs || [],
+      error: m.error || 'fail',
+      logs: m.logs || [],
       elapsedMs
     });
-  }
-
-  // Soft progress creep so UI never looks frozen while blocked in lua
-  let progress = typeof j.progress === 'number' ? j.progress : 1;
-  if (j.status === 'running' && progress < 90) {
-    progress = Math.min(90, progress + 0.5);
-    j.progress = progress;
-    MEM.set(id, j);
   }
 
   return res.json({
     success: true,
     async: true,
     jobId: id,
-    status: j.status || 'running',
-    progress: Math.floor(progress),
-    stage: j.stage || 'running',
-    logs: j.logs || [],
-    lastLog: j.lastLog || null,
+    status: m.status || 'running',
+    progress: Math.max(1, Math.floor(Number(m.progress) || 1)),
+    stage: m.stage || 'running',
+    logs: m.logs || [],
+    lastLog: m.lastLog || null,
     elapsedMs,
     mode: 'max'
   });
 });
 
-app.get('/jobs', requireKey, (req, res) => {
-  const list = [];
-  for (const [id, j] of MEM) {
-    list.push({
-      id,
-      status: j.status,
-      progress: j.progress,
-      stage: j.stage,
-      createdAt: j.createdAt
-    });
-  }
-  res.json({ count: list.length, jobs: list });
-});
-
-const indexPath = path.join(__dirname, 'index.html');
 app.get('/', (req, res) => {
+  const indexPath = path.join(__dirname, 'index.html');
   if (fs.existsSync(indexPath)) return res.sendFile(indexPath);
-  res.json({ product: 'QyrexOBF v2', mode: 'max' });
+  res.json({ product: 'QyrexOBF v2' });
 });
 
 app.use((req, res) => res.status(404).json({ success: false, error: 'Not found' }));
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log('========== QyrexOBF MAX ==========');
-  console.log('PORT', PORT);
-  console.log('jobs', JOB_ROOT);
+  console.log('QyrexOBF MAX on', PORT, 'jobs=', JOB_ROOT);
   console.log('lua', findLua());
   try { getRoot(); console.log('engines ok'); } catch (e) { console.error('engines', e.message); }
-  console.log('==================================');
 });
