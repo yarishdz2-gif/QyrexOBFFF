@@ -2,328 +2,293 @@
 
 const express = require('express');
 const cors = require('cors');
-const path = require('path');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const multer = require('multer');
 const fs = require('fs');
-const crypto = require('crypto');
-const { obfuscate } = require('./obfuscate');
+const path = require('path');
+const os = require('os');
+const { execFileSync, execSync } = require('child_process');
+const { v4: uuidv4 } = require('uuid');
 
 const app = express();
-const PORT = Number(process.env.PORT) || 3000;
-const VERSION = '2.1.0';
-const DATA_DIR = path.join(__dirname, 'data');
-const DB_FILE = path.join(DATA_DIR, 'users.json');
-const SESSION_TTL = 1000 * 60 * 60 * 24 * 7;
-const REGISTRATION_WINDOW = 1000 * 60 * 60 * 24;
-const MAX_REGISTRATIONS_PER_IP = 1;
-const ADMIN_USERNAME = 'qyrex';
-const DISCORD_INVITE = 'https://discord.gg/YzCsksufde';
+const PORT = process.env.PORT || 10000;
+const API_KEY = process.env.API_KEY || ''; // optional protection
 
-// Needed when the site is behind Render/Cloudflare/etc.
-app.set('trust proxy', true);
-
-// Lightweight built-in hardening; no extra dependencies required.
-app.disable('x-powered-by');
-app.use((req, res, next) => {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('Referrer-Policy', 'same-origin');
-  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-  if (process.env.NODE_ENV === 'production') {
-    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-  }
-  next();
-});
-
-const loginAttempts = new Map();
-const LOGIN_WINDOW = 15 * 60 * 1000;
-const MAX_LOGIN_ATTEMPTS = 30;
-function rateLimitLogin(req, res, next) {
-  const ip = requestIp(req);
-  const now = Date.now();
-  const item = loginAttempts.get(ip);
-  if (!item || now - item.resetAt > LOGIN_WINDOW) {
-    loginAttempts.set(ip, { count: 0, resetAt: now + LOGIN_WINDOW });
-    return next();
-  }
-  if (item.count >= MAX_LOGIN_ATTEMPTS) {
-    return res.status(429).json({ ok: false, error: 'Demasiados intentos. Espera unos minutos.' });
-  }
-  item.count += 1;
-  next();
-}
-
-fs.mkdirSync(DATA_DIR, { recursive: true });
-
-function blankDb() {
-  return { version: 2, users: [], sessions: {}, purchases: [], registrations: {} };
-}
-
-function normalizeDb(raw) {
-  const d = raw && typeof raw === 'object' ? raw : {};
-  d.version = 2;
-  d.users = Array.isArray(d.users) ? d.users : [];
-  d.sessions = d.sessions && typeof d.sessions === 'object' ? d.sessions : {};
-  d.purchases = Array.isArray(d.purchases) ? d.purchases : [];
-  d.registrations = d.registrations && typeof d.registrations === 'object' ? d.registrations : {};
-  for (const u of d.users) {
-    u.stats = u.stats && typeof u.stats === 'object' ? u.stats : {};
-    u.stats.obfuscations = Number(u.stats.obfuscations) || 0;
-    u.stats.bytes = Number(u.stats.bytes) || 0;
-    u.tokens = Math.max(0, Number(u.tokens) || 0);
-    u.tasks = u.tasks && typeof u.tasks === 'object' ? u.tasks : {};
-    u.tasks.account = true;
-    u.tasks.openObfuscator = !!u.tasks.openObfuscator;
-    u.tasks.firstObfuscation = !!u.tasks.firstObfuscation;
-  }
-  return d;
-}
-
-if (!fs.existsSync(DB_FILE)) fs.writeFileSync(DB_FILE, JSON.stringify(blankDb(), null, 2));
-
-app.use(cors());
+app.set('trust proxy', 1);
+app.use(helmet({ contentSecurityPolicy: false }));
+app.use(cors({ origin: true }));
 app.use(express.json({ limit: '2mb' }));
-app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
+app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
-function db() {
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 1.5 * 1024 * 1024 } // 1.5 MB
+});
+
+const limiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Rate limit exceeded. Max 30 requests per minute.' }
+});
+app.use(limiter);
+
+function requireApiKey(req, res, next) {
+  if (!API_KEY) return next();
+  const key = req.headers['x-api-key'] || req.query.key || (req.body && req.body.apiKey);
+  if (key === API_KEY) return next();
+  return res.status(401).json({ error: 'Invalid or missing API key' });
+}
+
+function findLuac() {
   try {
-    return normalizeDb(JSON.parse(fs.readFileSync(DB_FILE, 'utf8')));
-  } catch {
-    const fresh = blankDb();
-    try { fs.writeFileSync(DB_FILE, JSON.stringify(fresh, null, 2)); } catch {}
-    return fresh;
+    const result = execSync('which luac || which luac5.1', { encoding: 'utf8' }).trim();
+    if (result) return result.split('\n')[0];
+  } catch {}
+  const candidates = ['/usr/bin/luac', '/usr/bin/luac5.1', '/usr/local/bin/luac'];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
   }
+  return null;
 }
 
-function save(d) {
-  normalizeDb(d);
-  const tmp = DB_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(d, null, 2));
-  fs.renameSync(tmp, DB_FILE);
-}
+function obfuscateLua(source, options = {}) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ib2-'));
+  const inputFile = path.join(tmpDir, 'input.lua');
+  const outputFile = path.join(tmpDir, 'output.lua');
+  const bytecodeFile = path.join(tmpDir, 'input.luac');
 
-function norm(v) { return String(v ?? '').trim().toLowerCase(); }
-function requestIp(req) { return String(req.ip || req.headers['x-forwarded-for'] || 'unknown').split(',')[0].trim(); }
-function hashPassword(password, salt) { return crypto.scryptSync(password, salt, 64).toString('hex'); }
-function makePassword(password) {
-  const salt = crypto.randomBytes(16).toString('hex');
-  return { salt, hash: hashPassword(password, salt) };
-}
-function validPassword(password, user) {
   try {
-    const a = Buffer.from(hashPassword(password, user.salt), 'hex');
-    const b = Buffer.from(user.passwordHash, 'hex');
-    return a.length === b.length && crypto.timingSafeEqual(a, b);
-  } catch { return false; }
-}
-function makeToken() { return crypto.randomBytes(32).toString('hex'); }
-function publicUser(u) {
-  return {
-    id: u.id,
-    username: u.username,
-    email: u.email,
-    isAdmin: norm(u.username) === ADMIN_USERNAME || u.isAdmin === true,
-    tokens: u.tokens,
-    createdAt: u.createdAt,
-    stats: u.stats,
-    tasks: u.tasks
-  };
-}
-function cleanup(d) {
-  for (const [key, value] of Object.entries(d.sessions)) {
-    if (!value || Number(value.expiresAt) <= Date.now()) delete d.sessions[key];
-  }
-  for (const [ip, value] of Object.entries(d.registrations)) {
-    if (!value || Number(value.resetAt) <= Date.now()) delete d.registrations[ip];
-  }
-}
-function auth(req, res, next) {
-  const header = req.headers.authorization || '';
-  const sessionToken = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-  const d = db();
-  cleanup(d);
-  const session = d.sessions[sessionToken];
-  if (!session || session.expiresAt <= Date.now()) {
-    if (sessionToken && session) delete d.sessions[sessionToken];
-    save(d);
-    return res.status(401).json({ ok: false, error: 'Sesión inválida o expirada' });
-  }
-  const user = d.users.find(x => x.id === session.userId);
-  if (!user) return res.status(401).json({ ok: false, error: 'Usuario no encontrado' });
-  req.user = user;
-  req.db = d;
-  req.sessionToken = sessionToken;
-  next();
-}
+    fs.writeFileSync(inputFile, source, 'utf8');
 
-app.get('/api/health', (req, res) => res.json({ ok: true, version: VERSION }));
-app.get('/api/config', (req, res) => res.json({ ok: true, priceUsdPerToken: 1, discordInvite: DISCORD_INVITE }));
-
-app.post('/api/register', (req, res) => {
-  try {
-    const username = String(req.body?.username || '').trim();
-    const email = norm(req.body?.email);
-    const password = String(req.body?.password || '');
-    const ip = requestIp(req);
-
-    if (!/^[a-zA-Z0-9_]{3,24}$/.test(username)) {
-      return res.status(400).json({ ok: false, error: 'El usuario debe tener 3-24 caracteres y solo usar letras, números o _.' });
-    }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return res.status(400).json({ ok: false, error: 'Introduce un email válido.' });
-    }
-    if (password.length < 8) return res.status(400).json({ ok: false, error: 'La contraseña debe tener al menos 8 caracteres.' });
-
-    const d = db();
-    cleanup(d);
-
-    // Prevent multiple accounts from the same public IP during the registration window.
-    const reg = d.registrations[ip];
-    if (reg && reg.count >= MAX_REGISTRATIONS_PER_IP && reg.resetAt > Date.now()) {
-      return res.status(429).json({ ok: false, error: 'Ya existe una cuenta registrada desde esta conexión. Intenta de nuevo más tarde.' });
-    }
-    if (d.users.some(u => norm(u.username) === norm(username))) return res.status(409).json({ ok: false, error: 'Ese usuario ya está registrado.' });
-    if (d.users.some(u => norm(u.email) === email)) return res.status(409).json({ ok: false, error: 'Ese email ya está registrado.' });
-
-    const p = makePassword(password);
-    const id = crypto.randomUUID();
-    if (norm(username) === ADMIN_USERNAME && d.users.some(u => norm(u.username) === ADMIN_USERNAME)) {
-      return res.status(409).json({ ok: false, error: 'El usuario qyrex ya existe.' });
+    const luac = findLuac();
+    if (!luac) {
+      throw new Error('luac (Lua 5.1 compiler) not found on the server. Install lua5.1.');
     }
 
-    const user = {
-      id,
-      username,
-      email,
-      salt: p.salt,
-      passwordHash: p.hash,
-      isAdmin: norm(username) === ADMIN_USERNAME,
-      tokens: 1,
-      createdAt: new Date().toISOString(),
-      lastIp: ip,
-      stats: { obfuscations: 0, bytes: 0 },
-      tasks: { account: true, openObfuscator: false, firstObfuscation: false }
-    };
+    // Compile to bytecode
+    execFileSync(luac, ['-o', bytecodeFile, inputFile], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 15000
+    });
 
-    d.users.push(user);
-    d.registrations[ip] = { count: (reg?.count || 0) + 1, resetAt: Date.now() + REGISTRATION_WINDOW };
-    const session = makeToken();
-    d.sessions[session] = { userId: id, expiresAt: Date.now() + SESSION_TTL };
-    save(d);
-    return res.status(201).json({ ok: true, token: session, user: publicUser(user) });
-  } catch (error) {
-    console.error('REGISTER_ERROR', error);
-    return res.status(500).json({ ok: false, error: 'No se pudo crear la cuenta. Revisa el servidor.' });
-  }
-});
+    // Build CLI args for run.js
+    const args = [inputFile, outputFile];
+    if (options.noControlFlow) args.push('--no-control-flow');
+    if (options.noMutate) args.push('--no-mutate');
+    if (options.noSuperOps) args.push('--no-super-ops');
+    if (options.noCompress) args.push('--no-compress');
+    if (options.noMinify) args.push('--no-minify');
+    if (options.encryptStrings) args.push('--encrypt-strings');
+    if (options.preserveLines) args.push('--preserve-lines');
 
-app.post('/api/login', rateLimitLogin, (req, res) => {
-  try {
-    const login = norm(req.body?.login);
-    const password = String(req.body?.password || '');
-    const d = db();
-    cleanup(d);
-    const user = d.users.find(u => norm(u.email) === login || norm(u.username) === login);
-    if (!user || !validPassword(password, user)) return res.status(401).json({ ok: false, error: 'Usuario/email o contraseña incorrectos.' });
-    const session = makeToken();
-    d.sessions[session] = { userId: user.id, expiresAt: Date.now() + SESSION_TTL };
-    save(d);
-    return res.json({ ok: true, token: session, user: publicUser(user) });
-  } catch (error) {
-    console.error('LOGIN_ERROR', error);
-    return res.status(500).json({ ok: false, error: 'No se pudo iniciar sesión.' });
-  }
-});
+    // Call the IronBrew2 runner
+    const runJs = path.join(__dirname, 'ib2', 'run.js');
+    execFileSync(process.execPath, [runJs, ...args], {
+      cwd: path.join(__dirname, 'ib2'),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 60000,
+      env: { ...process.env, PATH: process.env.PATH }
+    });
 
-app.post('/api/logout', auth, (req, res) => {
-  delete req.db.sessions[req.sessionToken];
-  save(req.db);
-  res.json({ ok: true });
-});
-
-app.get('/api/me', auth, (req, res) => res.json({ ok: true, user: publicUser(req.user) }));
-
-app.post('/api/task/open-obfuscator', auth, (req, res) => {
-  req.user.tasks.openObfuscator = true;
-  save(req.db);
-  res.json({ ok: true, user: publicUser(req.user) });
-});
-
-app.post('/api/obfuscate', auth, (req, res) => {
-  try {
-    const code = String(req.body?.code || '');
-    if (!code.trim()) return res.status(400).json({ ok: false, error: 'El código está vacío.' });
-    if (code.length > 1000000) return res.status(413).json({ ok: false, error: 'El código supera el límite permitido.' });
-    if (req.user.tokens < 1) {
-      return res.status(402).json({ ok: false, error: 'Necesitas 1 token para ofuscar código.', tokens: req.user.tokens, code: 'TOKEN_REQUIRED' });
+    if (!fs.existsSync(outputFile)) {
+      throw new Error('Obfuscation produced no output file');
     }
 
-    const result = obfuscate(code);
-    req.user.tokens -= 1;
-    req.user.stats.obfuscations += 1;
-    req.user.stats.bytes += Buffer.byteLength(code, 'utf8');
-    req.user.tasks.openObfuscator = true;
-    req.user.tasks.firstObfuscation = true;
-    save(req.db);
+    const result = fs.readFileSync(outputFile, 'latin1');
+    return result;
+  } finally {
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {}
+  }
+}
 
-    return res.json({ ok: true, code: result.code, stats: result.stats, tokens: req.user.tokens });
-  } catch (error) {
-    console.error('OBFUSCATE_ERROR', error);
-    return res.status(400).json({ ok: false, error: String(error.message || error) });
+// Health
+app.get('/', (req, res) => {
+  res.json({
+    service: 'IronBrew2 Obfuscator API',
+    status: 'online',
+    endpoints: {
+      'POST /obfuscate': 'Body: { "source": "lua code", "options": {...} } or multipart file',
+      'GET /health': 'Health check'
+    },
+    options: {
+      noControlFlow: false,
+      noMutate: false,
+      noSuperOps: false,
+      noCompress: false,
+      noMinify: false,
+      encryptStrings: false,
+      preserveLines: false
+    },
+    note: API_KEY ? 'API key required (header x-api-key)' : 'No API key configured'
+  });
+});
+
+app.get('/health', (req, res) => {
+  const luac = findLuac();
+  res.json({
+    ok: true,
+    luac: !!luac,
+    luacPath: luac || null,
+    uptime: process.uptime()
+  });
+});
+
+// Main obfuscate endpoint (JSON)
+app.post('/obfuscate', requireApiKey, async (req, res) => {
+  try {
+    let source = '';
+    if (req.body && typeof req.body.source === 'string') {
+      source = req.body.source;
+    } else if (req.body && typeof req.body.code === 'string') {
+      source = req.body.code;
+    }
+
+    if (!source || source.trim().length < 3) {
+      return res.status(400).json({ error: 'Missing or empty "source" (Lua code)' });
+    }
+    if (source.length > 1.2 * 1024 * 1024) {
+      return res.status(400).json({ error: 'Source too large (max ~1.2 MB)' });
+    }
+
+    const options = (req.body && req.body.options) || {};
+    const start = Date.now();
+    const obfuscated = obfuscateLua(source, options);
+    const ms = Date.now() - start;
+
+    res.json({
+      success: true,
+      timeMs: ms,
+      originalSize: source.length,
+      obfuscatedSize: obfuscated.length,
+      code: obfuscated
+    });
+  } catch (err) {
+    console.error('Obfuscate error:', err.message);
+    res.status(500).json({
+      success: false,
+      error: err.message || 'Obfuscation failed'
+    });
   }
 });
 
-app.post('/api/purchases/create', auth, (req, res) => {
-  const qty = Math.max(1, Math.min(1000, Math.floor(Number(req.body?.tokens) || 1)));
-  const purchase = {
-    id: crypto.randomUUID(),
-    userId: req.user.id,
-    tokens: qty,
-    amountUsd: qty,
-    status: 'pending',
-    createdAt: new Date().toISOString(),
-    discordInvite: DISCORD_INVITE
-  };
-  req.db.purchases.push(purchase);
-  save(req.db);
-  res.json({ ok: true, purchase, redirect: DISCORD_INVITE });
+// Also accept file upload
+app.post('/obfuscate/file', requireApiKey, upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({ error: 'No file uploaded (field name: file)' });
+    }
+    const source = req.file.buffer.toString('utf8');
+    if (source.length < 3) {
+      return res.status(400).json({ error: 'Empty file' });
+    }
+
+    const options = {};
+    if (req.body) {
+      if (req.body.encryptStrings === 'true' || req.body.encryptStrings === true) options.encryptStrings = true;
+      if (req.body.noMinify === 'true' || req.body.noMinify === true) options.noMinify = true;
+      if (req.body.noControlFlow === 'true') options.noControlFlow = true;
+    }
+
+    const start = Date.now();
+    const obfuscated = obfuscateLua(source, options);
+    const ms = Date.now() - start;
+
+    res.json({
+      success: true,
+      timeMs: ms,
+      originalSize: source.length,
+      obfuscatedSize: obfuscated.length,
+      code: obfuscated
+    });
+  } catch (err) {
+    console.error('Obfuscate file error:', err.message);
+    res.status(500).json({ success: false, error: err.message || 'Obfuscation failed' });
+  }
 });
 
-app.get('/api/purchases', auth, (req, res) => res.json({ ok: true, purchases: req.db.purchases.filter(x => x.userId === req.user.id).slice(-50).reverse() }));
-
-app.get('/api/admin/overview', auth, (req, res) => {
-  if (!req.user.isAdmin && norm(req.user.username) !== ADMIN_USERNAME) return res.status(403).json({ ok: false, error: 'Acceso de administrador requerido.' });
-  const users = req.db.users;
-  const purchases = req.db.purchases;
-  res.json({ ok: true, stats: { users: users.length, tokens: users.reduce((n,u)=>n+Number(u.tokens||0),0), obfuscations: users.reduce((n,u)=>n+Number(u.stats?.obfuscations||0),0), purchases: purchases.length, pendingPurchases: purchases.filter(p=>p.status==='pending').length }, users: users.map(u=>({ id:u.id, username:u.username, email:u.email, tokens:Number(u.tokens||0), isAdmin:!!u.isAdmin || norm(u.username)===ADMIN_USERNAME, createdAt:u.createdAt, stats:u.stats, lastIp:u.lastIp })), purchases: purchases.slice(-100).reverse() });
+// Simple HTML UI for testing
+app.get('/ui', (req, res) => {
+  res.type('html').send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IronBrew2 Obfuscator</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; background: #0f0f12; color: #e4e4e7; margin: 0; padding: 24px; }
+    h1 { font-size: 1.5rem; margin-bottom: 8px; }
+    .sub { color: #a1a1aa; margin-bottom: 24px; }
+    textarea { width: 100%; height: 220px; background: #18181b; border: 1px solid #27272a; color: #e4e4e7;
+               border-radius: 10px; padding: 12px; font-family: ui-monospace, monospace; font-size: 13px; resize: vertical; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; margin: 16px 0; align-items: center; }
+    button { background: #7c3aed; color: white; border: none; padding: 10px 20px; border-radius: 8px;
+             font-weight: 600; cursor: pointer; }
+    button:hover { background: #6d28d9; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    label { display: flex; align-items: center; gap: 6px; font-size: 14px; color: #a1a1aa; }
+    .status { margin-top: 12px; font-size: 14px; color: #a1a1aa; }
+    .ok { color: #34d399; }
+    .err { color: #f87171; }
+  </style>
+</head>
+<body>
+  <h1>IronBrew2 Lua Obfuscator</h1>
+  <p class="sub">Paste your Lua / Luau script and click Obfuscate. Ready for Render.</p>
+  <textarea id="src" placeholder="-- your lua code here&#10;print('hello')"></textarea>
+  <div class="row">
+    <label><input type="checkbox" id="enc"> Encrypt strings</label>
+    <label><input type="checkbox" id="nominify"> No minify</label>
+    <label><input type="checkbox" id="nocf"> No control-flow</label>
+    <button id="btn" onclick="run()">Obfuscate</button>
+  </div>
+  <div class="status" id="st"></div>
+  <textarea id="out" placeholder="Obfuscated output will appear here..." readonly style="margin-top:12px;height:280px"></textarea>
+  <script>
+    async function run() {
+      const btn = document.getElementById('btn');
+      const st = document.getElementById('st');
+      const src = document.getElementById('src').value;
+      if (!src.trim()) { st.className = 'status err'; st.textContent = 'Empty source'; return; }
+      btn.disabled = true; st.className = 'status'; st.textContent = 'Obfuscating...';
+      try {
+        const body = {
+          source: src,
+          options: {
+            encryptStrings: document.getElementById('enc').checked,
+            noMinify: document.getElementById('nominify').checked,
+            noControlFlow: document.getElementById('nocf').checked
+          }
+        };
+        const r = await fetch('/obfuscate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const data = await r.json();
+        if (!data.success) throw new Error(data.error || 'Failed');
+        document.getElementById('out').value = data.code;
+        st.className = 'status ok';
+        st.textContent = 'OK — ' + data.timeMs + ' ms | ' + data.originalSize + ' → ' + data.obfuscatedSize + ' bytes';
+      } catch (e) {
+        st.className = 'status err';
+        st.textContent = e.message || String(e);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+  </script>
+</body>
+</html>`);
 });
 
-app.post('/api/admin/users/:id/tokens', auth, (req, res) => {
-  if (!req.user.isAdmin && norm(req.user.username) !== ADMIN_USERNAME) return res.status(403).json({ ok: false, error: 'Acceso de administrador requerido.' });
-  const amount = Math.floor(Number(req.body?.amount));
-  if (!Number.isFinite(amount) || amount === 0 || Math.abs(amount) > 100000) return res.status(400).json({ ok: false, error: 'Cantidad inválida.' });
-  const target = req.db.users.find(u=>u.id===req.params.id);
-  if (!target) return res.status(404).json({ ok: false, error: 'Usuario no encontrado.' });
-  target.tokens = Math.max(0, Number(target.tokens||0) + amount);
-  save(req.db);
-  res.json({ ok:true, user:publicUser(target) });
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`IronBrew2 Obfuscator API listening on 0.0.0.0:${PORT}`);
+  console.log('luac available:', !!findLuac());
+  console.log('API_KEY set:', !!API_KEY);
 });
-
-app.delete('/api/admin/users/:id', auth, (req, res) => {
-  if (!req.user.isAdmin && norm(req.user.username) !== ADMIN_USERNAME) return res.status(403).json({ ok: false, error: 'Acceso de administrador requerido.' });
-  const target = req.db.users.find(u=>u.id===req.params.id);
-  if (!target) return res.status(404).json({ ok:false, error:'Usuario no encontrado.' });
-  if (norm(target.username) === ADMIN_USERNAME) return res.status(400).json({ ok:false, error:'No puedes eliminar al administrador principal.' });
-  req.db.users = req.db.users.filter(u=>u.id!==target.id);
-  for (const [token,s] of Object.entries(req.db.sessions)) if (s.userId===target.id) delete req.db.sessions[token];
-  save(req.db);
-  res.json({ok:true});
-});
-
-// After creating a purchase, users are directed to the official Qyrex Discord.
-// Token credit must be performed after your real payment provider confirms the purchase.
-app.get('/api/purchase-destination', (req, res) => {
-  res.json({ ok: true, discordInvite: DISCORD_INVITE });
-});
-
-app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
-app.listen(PORT, () => console.log(`QyrexObf VM ${VERSION} running on :${PORT}`));

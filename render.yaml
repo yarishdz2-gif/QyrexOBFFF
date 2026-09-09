@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: ib2-obfuscator
+    runtime: docker
+    plan: free
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: API_KEY
+        generateValue: true   # or set a fixed secret in the dashboard
+    healthCheckPath: /health
