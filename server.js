@@ -15,8 +15,8 @@ const API_KEY = process.env.API_KEY || '';
 app.set('trust proxy', 1);
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({ origin: true }));
-app.use(express.json({ limit: '2mb' }));
-app.use(rateLimit({ windowMs: 60000, max: 12, message: { error: 'Rate limit' } }));
+app.use(express.json({ limit: '32mb' }));
+app.use(rateLimit({ windowMs: 60000, max: 20, message: { error: 'Rate limit' } }));
 
 function requireKey(req, res, next) {
   if (!API_KEY) return next();
@@ -54,8 +54,8 @@ app.post('/obfuscate', requireKey, (req, res) => {
     if (!source || String(source).trim().length < 2) {
       return res.status(400).json({ success: false, error: 'Missing source' });
     }
-    if (source.length > 500000) {
-      return res.status(400).json({ success: false, error: 'Source too large' });
+    if (source.length > 8000000) {
+      return res.status(400).json({ success: false, error: 'Source too large (max ~8MB)' });
     }
     const t0 = Date.now();
     const result = obfuscate(source, {});

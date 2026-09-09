@@ -14286,6 +14286,11 @@ function obfuscate(source, opts) {
   } catch (e) {
     steps.push('IronBrew2:skip');
   }
+  // Header watermark (always on top of final output)
+  const header = '--QyrexObf [qyrex.hopto.org]\n';
+  if (typeof code === 'string' && !code.startsWith('--QyrexObf')) {
+    code = header + code;
+  }
   return { code: code, engine: 'QyrexOBF', steps: steps };
 }
 
