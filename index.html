@@ -483,7 +483,18 @@
             antiTamper: $("at") ? $("at").checked : true
           }),
         });
-        const d = await r.json();
+        const rawText = await r.text();
+        let d;
+        try {
+          d = rawText ? JSON.parse(rawText) : null;
+        } catch (_) {
+          throw new Error(
+            "El servidor no devolvió JSON (posible timeout/crash). " +
+            "Prueba desactivar AntiTamper o un script más corto. Detalle: " +
+            (rawText ? rawText.slice(0, 400) : "respuesta vacía · status " + r.status)
+          );
+        }
+        if (!d) throw new Error("Respuesta vacía del servidor (status " + r.status + ")");
         if (!d.success) throw new Error(d.error || "Error de ofuscación");
 
         $("out").value = d.code;

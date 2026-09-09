@@ -13,7 +13,7 @@ function stripAnsi(str) {
     .replace(/\u001b\[[0-9;]*m/g, '')
     .replace(/\x1b\[[0-9;]*m/g, '')
     .replace(/\[0m/g, '')
-    .replace(/\[[0-9]+m/g, '')
+    .replace(/\[[0-9;]*m/g, '')
     .trim();
 }
 
@@ -21,17 +21,30 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 const API_KEY = process.env.API_KEY || '';
 
+process.on('uncaughtException', (err) => {
+  console.error('[QyrexOBF] uncaughtException', stripAnsi(err && err.message));
+});
+process.on('unhandledRejection', (err) => {
+  console.error('[QyrexOBF] unhandledRejection', stripAnsi(err && (err.message || String(err))));
+});
+
 app.set('trust proxy', 1);
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: '32mb' }));
-app.use(rateLimit({ windowMs: 60000, max: 20, message: { error: 'Rate limit' } }));
+app.use(rateLimit({
+  windowMs: 60000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Rate limit — espera un momento' }
+}));
 
 function requireKey(req, res, next) {
   if (!API_KEY) return next();
   const key = req.headers['x-api-key'] || req.query.key || (req.body && req.body.apiKey);
   if (key === API_KEY) return next();
-  return res.status(401).json({ error: 'Invalid API key' });
+  return res.status(401).json({ success: false, error: 'Invalid API key' });
 }
 
 app.get('/health', (req, res) => {
@@ -52,25 +65,49 @@ app.get('/health', (req, res) => {
 });
 
 app.post('/obfuscate', requireKey, (req, res) => {
+  const reply = (status, body) => {
+    if (res.headersSent) return;
+    try {
+      res.status(status).json(body);
+    } catch (e) {
+      try { res.status(status).end(JSON.stringify(body)); } catch (_) {}
+    }
+  };
+
   try {
     if (!findLua()) {
-      return res.status(500).json({
+      return reply(500, {
         success: false,
         error: 'QyrexOBF: lua5.1 no encontrado. En Render usa Runtime DOCKER (no Node). Abre /health para diagnosticar.'
       });
     }
+
     const source = (req.body && (req.body.source || req.body.code)) || '';
     if (!source || String(source).trim().length < 2) {
-      return res.status(400).json({ success: false, error: 'Missing source' });
+      return reply(400, { success: false, error: 'Missing source — pega código Lua/Luau' });
     }
     if (source.length > 8000000) {
-      return res.status(400).json({ success: false, error: 'Source too large (max ~8MB)' });
+      return reply(400, { success: false, error: 'Source too large (max ~8MB)' });
     }
+
     const t0 = Date.now();
     const opts = {};
     if (req.body && req.body.antiTamper === false) opts.antiTamper = false;
-    const result = obfuscate(source, opts);
-    res.json({
+
+    let result;
+    try {
+      result = obfuscate(source, opts);
+    } catch (err) {
+      const clean = stripAnsi(err && (err.message || String(err))) || 'Obfuscation failed';
+      console.error('[QyrexOBF] obfuscate error:', clean);
+      return reply(500, { success: false, error: clean });
+    }
+
+    if (!result || typeof result.code !== 'string' || !result.code.length) {
+      return reply(500, { success: false, error: 'QyrexOBF no generó output' });
+    }
+
+    return reply(200, {
       success: true,
       product: 'QyrexOBF v2',
       timeMs: Date.now() - t0,
@@ -78,13 +115,13 @@ app.post('/obfuscate', requireKey, (req, res) => {
       obfuscatedSize: result.code.length,
       engine: 'QyrexOBF',
       steps: result.steps || null,
+      antiTamper: !!result.antiTamper,
       code: result.code
     });
   } catch (err) {
-    const raw = err && (err.message || String(err));
-    const clean = stripAnsi(raw) || 'fail';
+    const clean = stripAnsi(err && (err.message || String(err))) || 'fail';
     console.error('[QyrexOBF]', clean);
-    res.status(500).json({ success: false, error: clean });
+    return reply(500, { success: false, error: clean });
   }
 });
 
@@ -92,6 +129,10 @@ const indexPath = path.join(__dirname, 'index.html');
 app.get('/', (req, res) => {
   if (fs.existsSync(indexPath)) return res.sendFile(indexPath);
   res.json({ product: 'QyrexOBF v2' });
+});
+
+app.use((req, res) => {
+  res.status(404).json({ success: false, error: 'Not found' });
 });
 
 app.listen(PORT, '0.0.0.0', () => {

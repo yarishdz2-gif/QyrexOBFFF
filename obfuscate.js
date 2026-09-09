@@ -14032,9 +14032,31 @@ function runPrometheus(source, preset) {
   try {
     fs.writeFileSync(input, source, 'utf8');
     const safe = ['Minify', 'Weak', 'Medium', 'Strong'].indexOf(preset) >= 0 ? preset : 'Strong';
-    execFileSync(lua, [path.join(dir, 'cli.lua'), '--preset', safe, '--out', output, input], {
-      cwd: dir, timeout: 600000, maxBuffer: 80 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe']
-    });
+    try {
+      execFileSync(lua, [path.join(dir, 'cli.lua'), '--preset', safe, '--out', output, input], {
+        cwd: dir, timeout: 600000, maxBuffer: 80 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'],
+        env: Object.assign({}, process.env, { TERM: 'dumb' })
+      });
+    } catch (e) {
+      const stderr = e && e.stderr ? String(e.stderr) : '';
+      const stdout = e && e.stdout ? String(e.stdout) : '';
+      const msg = stripAnsi((stderr || stdout || e.message || 'Prometheus failed').slice(0, 2000));
+      // Try Medium once if Strong failed
+      if (safe === 'Strong') {
+        try {
+          execFileSync(lua, [path.join(dir, 'cli.lua'), '--preset', 'Medium', '--out', output, input], {
+            cwd: dir, timeout: 600000, maxBuffer: 80 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'],
+            env: Object.assign({}, process.env, { TERM: 'dumb' })
+          });
+        } catch (e2) {
+          const stderr2 = e2 && e2.stderr ? String(e2.stderr) : '';
+          const msg2 = stripAnsi((stderr2 || e2.message || msg).slice(0, 2000));
+          throw new Error('Prometheus: ' + msg2);
+        }
+      } else {
+        throw new Error('Prometheus: ' + msg);
+      }
+    }
     if (!fs.existsSync(output)) throw new Error('Prometheus sin output');
     return fs.readFileSync(output, 'utf8');
   } finally {
