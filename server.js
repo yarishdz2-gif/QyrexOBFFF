@@ -32,8 +32,8 @@ app.get('/health', (req, res) => {
   const luac = findLuac();
   res.json({
     ok: !!(lua && engines),
-    product: 'QyrexOBF',
-    fused: 'Prometheus Strong → Hercules → IronBrew2',
+    product: 'QyrexOBF v2',
+    fused: 'AntiTamper → Prometheus Strong → Hercules → IronBrew2',
     lua: lua,
     luac: luac,
     enginesReady: engines,
@@ -61,7 +61,7 @@ app.post('/obfuscate', requireKey, (req, res) => {
     const result = obfuscate(source, {});
     res.json({
       success: true,
-      product: 'QyrexOBF',
+      product: 'QyrexOBF v2',
       timeMs: Date.now() - t0,
       originalSize: source.length,
       obfuscatedSize: result.code.length,
@@ -78,7 +78,7 @@ app.post('/obfuscate', requireKey, (req, res) => {
 const indexPath = path.join(__dirname, 'index.html');
 app.get('/', (req, res) => {
   if (fs.existsSync(indexPath)) return res.sendFile(indexPath);
-  res.json({ product: 'QyrexOBF' });
+  res.json({ product: 'QyrexOBF v2' });
 });
 
 app.listen(PORT, '0.0.0.0', () => {

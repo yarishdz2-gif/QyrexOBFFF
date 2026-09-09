@@ -1,7 +1,7 @@
 {
   "name": "qyrex-obf",
-  "version": "2.0.0",
-  "description": "QyrexOBF — fused Prometheus + IronBrew2 + Hercules Lua obfuscator",
+  "version": "2.1.0",
+  "description": "QyrexOBF — fused AntiTamper + Prometheus + IronBrew2 + Hercules Lua obfuscator",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

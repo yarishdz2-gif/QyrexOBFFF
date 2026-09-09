@@ -14091,12 +14091,188 @@ function runHercules(source) {
  *   strong = Prometheus Strong only
  *   ib2 / hercules = single engine
  */
+function buildAntiTamper() {
+  function posKeyEncode(str, key) {
+    const t = [];
+    for (let i = 0; i < str.length; i++) {
+      const idx = i + 1;
+      const ki = (key * ((idx % 11) + 1) + idx * 7 + (key % 31)) % 256;
+      t.push((str.charCodeAt(i) + ki) % 256);
+    }
+    return t;
+  }
+  function rndKey() { return 17 + Math.floor(Math.random() * 217); }
+  const stopKey = rndKey();
+  const markerKey = rndKey();
+  const stopBytes = posKeyEncode('stop skidding', stopKey);
+  const markerBytes = posKeyEncode('AT1_OK_' + Math.floor(10000 + Math.random() * 89999), markerKey);
+  return `
+-- QyrexOBF Anti-Tamper v2 (no XOR / no Base64)
+do
+  local function _pk_dec(t, k)
+    local r = {}
+    for i = 1, #t do
+      local ki = (k * ((i % 11) + 1) + i * 7 + (k % 31)) % 256
+      r[i] = string.char((t[i] - ki + 512) % 256)
+    end
+    return table.concat(r)
+  end
+  local _stop = _pk_dec({${stopBytes.join(',')}}, ${stopKey})
+  local function _crash()
+    local t
+    while true do t = {t} end
+  end
+  local _type, _pcall, _error = type, pcall, error
+  local _find, _tostring, _tonumber = string.find, tostring, tonumber
+  local _floor, _random = math.floor, math.random
+
+  do
+    local G = _G or {}
+    local suspects = {
+      "lune","lute","wally","rojo","selene","darklua","luau_lsp","remodel",
+      "tarmac","stylua","lemur","busted","luaunit","telescope","plugin",
+      "fetch","console","setTimeout","setInterval","Buffer","AbortController",
+      "crypto","performance","global","Headers","Request","Response",
+      "TextDecoder","TextEncoder","dofile","loadfile","atob","btoa","self",
+      "FormData","Blob","File","URLSearchParams","Event","CustomEvent",
+      "structuredClone","__dirname","__filename","navigator","location",
+      "history","window","document","XMLHttpRequest","WebSocket","Worker",
+      "localStorage","sessionStorage","globalThis","process"
+    }
+    for i = 1, #suspects do
+      if rawget(G, suspects[i]) ~= nil then _crash() end
+    end
+    if type(G.process) == "table" and (G.process.env or G.process.platform or G.process.argv) then
+      _crash()
+    end
+    if type(require) == "function" then
+      local probes = {"@lune/fs","@lune/process","@lute/fs","lune","lute","luvit","luvi","remodel"}
+      for i = 1, #probes do
+        if _pcall(require, probes[i]) then _crash() end
+      end
+    end
+  end
+
+  if _type(game) ~= "userdata" or _type(Enum) ~= "userdata" then _crash() end
+  if string.byte("A") ~= 65 or math.floor(3.9) ~= 3 or math.floor(math.pi) ~= 3 then _crash() end
+  if _type(string) ~= "table" or _type(math) ~= "table" or _type(table) ~= "table" then _crash() end
+  local okE = _pcall(_error, "\\0", 0)
+  if okE then _crash() end
+  if _type(game) == _type({}) then _crash() end
+  if _type(typeof) == "function" and typeof(game) == "table" then _crash() end
+  do
+    local okMt, mt = _pcall(getmetatable, game)
+    if okMt and _type(mt) == _type({}) then _crash() end
+  end
+  local _nan = 0/0
+  if _nan == _nan then _crash() end
+
+  local function _safeGet(obj, key)
+    local ok, v = _pcall(function() return obj[key] end)
+    return ok, v
+  end
+
+  local okJ, jobId = _safeGet(game, "JobId")
+  if okJ and jobId == "00000000-0000-0000-0000-000000000000" then _crash() end
+  local okP, placeId = _safeGet(game, "PlaceId")
+  if okP and placeId == 8916037983 then _crash() end
+  local okG, gameId = _safeGet(game, "GameId")
+  if okG and gameId == 8916037983 then _crash() end
+
+  local okPlayers, Players = _pcall(function() return game:GetService("Players") end)
+  if not okPlayers or Players == nil then _crash() end
+  local LP
+  do
+    local okLP, v = _safeGet(Players, "LocalPlayer")
+    if okLP then LP = v end
+  end
+  if LP == nil then _crash() end
+  if LP then
+    local okU, uid = _safeGet(LP, "UserId")
+    if okU and uid == 123456789 then _crash() end
+    local okN, nm = _safeGet(LP, "Name")
+    if okN and nm == "vole7vin" then _crash() end
+  end
+
+  do
+    local okSt, Stats = _pcall(function() return game:GetService("Stats") end)
+    if not okSt or not Stats then _crash() end
+    local okNet, Net = _safeGet(Stats, "Network")
+    if not okNet or not Net then _crash() end
+    local okSSI, SSI = _safeGet(Net, "ServerStatsItem")
+    if not okSSI or not SSI then _crash() end
+    local okDP, DP = _safeGet(SSI, "Data Ping")
+    if not okDP or not DP then _crash() end
+    local okGV, gv = _safeGet(DP, "GetValue")
+    if not okGV or _type(gv) ~= "function" then _crash() end
+    local okPing, pingVal = _pcall(gv, DP)
+    if not okPing or pingVal == nil or pingVal == "" or pingVal == 0 then _crash() end
+    if _floor(_tonumber(pingVal) or 0) == 0 then _crash() end
+  end
+
+  do
+    local okC, CoreGui = _pcall(function() return game:GetService("CoreGui") end)
+    if not okC or not CoreGui then _crash() end
+    local okR, RobloxGui = _pcall(function() return CoreGui:FindFirstChild("RobloxGui") end)
+    if not okR or not RobloxGui then _crash() end
+  end
+
+  local _marker = _pk_dec({${markerBytes.join(',')}}, ${markerKey})
+  local function _probe(fn)
+    local ok, err = _pcall(fn)
+    if _type(err) ~= "string" then return false end
+    return _find(err, _marker, 1, true) ~= nil
+  end
+  for _ = 1, 5 do
+    if not _probe(function() _error(_marker) end) then _crash() end
+  end
+
+  do
+    local valid = true
+    local intact2 = false
+    local intact = _pcall(function() intact2 = true end) and intact2
+    if not intact then _crash() end
+    local acc1, acc2, len = 0, 0, 64
+    for i = 1, len do
+      local n2 = i % 256
+      local pos = i % len + 1
+      local shouldErr = (i % 2 == 0)
+      local eMsg = "E#" .. _tostring(i)
+      local arr = {_pcall(function()
+        if shouldErr then _error(eMsg, 0) end
+        local res = {}
+        for j = 1, len do res[j] = _random(0, 255) end
+        res[pos] = n2
+        return table.unpack and table.unpack(res) or unpack(res)
+      end)}
+      if shouldErr then
+        valid = valid and arr[1] == false
+      else
+        valid = valid and arr[1]
+        acc1 = (acc1 + (arr[pos + 1] or 0)) % 256
+        acc2 = (acc2 + n2) % 256
+      end
+    end
+    if not (valid and acc1 == acc2) then _crash() end
+  end
+end
+`;
+}
+
 function obfuscate(source, opts) {
   opts = opts || {};
   getRoot();
-  // QyrexOBF = ALWAYS fused: Prometheus Strong + Hercules (best effort) + IronBrew2
+  // QyrexOBF v2 = AntiTamper (no XOR/Base64) → Prometheus Strong → Hercules → IronBrew2
   const steps = [];
-  let code = runPrometheus(source, 'Strong');
+  let src = source;
+  try {
+    const at = buildAntiTamper();
+    src = at + "\n" + source;
+    steps.push('AntiTamper:v2');
+  } catch (e) {
+    steps.push('AntiTamper:skip');
+  }
+  let code = runPrometheus(src, 'Strong');
   steps.push('Prometheus:Strong');
   try {
     code = runHercules(code);
