@@ -14059,6 +14059,25 @@ function findLua() {
   return null;
 }
 
+function findLua54() {
+  const tries = [
+    '/usr/bin/lua5.4',
+    '/usr/local/bin/lua5.4',
+    '/usr/bin/lua5.3',
+    '/usr/local/bin/lua5.3',
+    path.join(getRoot(), 'bin', 'lua5.4')
+  ];
+  for (let i = 0; i < tries.length; i++) {
+    const c = tries[i];
+    try {
+      if (!fs.existsSync(c)) continue;
+      execFileSync(c, ['-v'], { stdio: 'pipe', timeout: 8000 });
+      return c;
+    } catch (e) {}
+  }
+  return null;
+}
+
 function findLuac() {
   const tries = [
     '/usr/bin/luac5.1',
@@ -14096,6 +14115,7 @@ function runWithNice(file, args, opts) {
 
 // Strong-quality but ONE Vmify (stock Strong does Vmify twice → ~200KB on a print)
 function prometheusStrongConfig() {
+  // MAX hardness, single Vmify (double Vmify = 200KB+ and free-tier kills)
   return [
     'return {',
     '  LuaVersion = "Lua51",',
@@ -14105,18 +14125,20 @@ function prometheusStrongConfig() {
     '  Seed = 0,',
     '  Steps = {',
     '    { Name = "EncryptStrings", Settings = {} },',
+    '    { Name = "SplitStrings", Settings = { Threshold = 1, MinLength = 3, MaxLength = 5, ConcatenationType = "custom", CustomFunctionType = "global" } },',
+    '    { Name = "ProxifyLocals", Settings = {} },',
     '    { Name = "Vmify", Settings = {} },',
     '    {',
     '      Name = "ConstantArray",',
     '      Settings = {',
     '        Threshold = 1,',
-    '        StringsOnly = true,',
+    '        StringsOnly = false,',
     '        Shuffle = true,',
     '        Rotate = true,',
     '        LocalWrapperThreshold = 0',
     '      },',
     '    },',
-    '    { Name = "NumbersToExpressions", Settings = {} },',
+    '    { Name = "NumbersToExpressions", Settings = { NumberRepresentationMutation = true } },',
     '    { Name = "WrapInFunction", Settings = {} },',
     '  },',
     '}',
@@ -14136,7 +14158,7 @@ function runPrometheus(source, preset) {
     fs.writeFileSync(input, source, 'utf8');
     const safe = ['Minify', 'Weak', 'Medium', 'Strong'].indexOf(preset) >= 0 ? preset : 'Strong';
     const env = Object.assign({}, process.env, { TERM: 'dumb' });
-    const common = { cwd: dir, timeout: 120000, maxBuffer: 100 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'], env: env };
+    const common = { cwd: dir, timeout: 180000, maxBuffer: 100 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'], env: env };
     try {
       if (safe === 'Strong') {
         // Custom Strong: same protections, single VM layer → much smaller output
@@ -14183,11 +14205,10 @@ function runIB2(source) {
     const luaDir = path.dirname(findLua() || '/usr/bin');
     runWithNice(process.execPath, [
       runJs, input, output,
-      '--encrypt-strings',
-      '--no-super-ops'
+      '--encrypt-strings'
     ], {
       cwd: dir,
-      timeout: 75000,
+      timeout: 90000,
       maxBuffer: 100 * 1024 * 1024,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: Object.assign({}, process.env, {
@@ -14202,7 +14223,8 @@ function runIB2(source) {
 }
 
 function runHercules(source) {
-  const lua = findLua();
+  // Hercules needs Lua 5.2+ (goto). Prefer 5.4; fall back to 5.1 only if nothing else.
+  const lua = findLua54() || findLua();
   if (!lua) throw new Error('lua no disponible');
   const dir = p('hercules-obfuscator-source', 'src');
   const entry = path.join(dir, 'hercules.lua');
@@ -14211,8 +14233,9 @@ function runHercules(source) {
   const input = path.join(tmp, 'in.lua');
   try {
     fs.writeFileSync(input, source, 'utf8');
-    runWithNice(lua, [entry, input], {
-      cwd: dir, timeout: 60000, maxBuffer: 100 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe']
+    // MAX preset: VM + antitamper + CF + strings + garbage + bytecode + ...
+    runWithNice(lua, [entry, input, '--maximum', '--target', 'lua', '--no-watermark'], {
+      cwd: dir, timeout: 90000, maxBuffer: 100 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe']
     });
     const files = fs.readdirSync(tmp).filter(function (f) { return f !== 'in.lua'; });
     if (!files.length) throw new Error('Hercules sin output');
@@ -14366,4 +14389,4 @@ function obfuscate(source, opts) {
   return { code: code, engine: "QyrexOBF", steps: steps, antiTamper: usedAT, mode: "max" };
 }
 
-module.exports = { obfuscate: obfuscate, getRoot: getRoot, findLua: findLua, findLuac: findLuac, runPrometheus: runPrometheus, runHercules: runHercules, runIB2: runIB2, buildAntiTamper: buildAntiTamper };
+module.exports = { obfuscate: obfuscate, getRoot: getRoot, findLua: findLua, findLua54: findLua54, findLuac: findLuac, runPrometheus: runPrometheus, runHercules: runHercules, runIB2: runIB2, buildAntiTamper: buildAntiTamper };

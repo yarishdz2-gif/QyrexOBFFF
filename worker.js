@@ -73,7 +73,7 @@ try {
     }
   }
 
-  save({ progress: 32, stage: 'prometheus', logLine: 'Prometheus Strong… puede tardar 1–3 min, la barra subirá despacio' });
+  save({ progress: 32, stage: 'prometheus', logLine: 'Prometheus MAX… (Encrypt+Split+Proxy+VM+Constants)' });
   try {
     code = runPrometheus(code, 'Strong');
     steps.push('Prometheus:Strong');
@@ -91,7 +91,7 @@ try {
     }
   }
 
-  save({ progress: 65, stage: 'hercules', logLine: 'Hercules…' });
+  save({ progress: 65, stage: 'hercules', logLine: 'Hercules --maximum…' });
   try {
     code = runHercules(code);
     steps.push('Hercules');
