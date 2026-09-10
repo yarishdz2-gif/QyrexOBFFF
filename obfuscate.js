@@ -14136,7 +14136,7 @@ function runPrometheus(source, preset) {
     fs.writeFileSync(input, source, 'utf8');
     const safe = ['Minify', 'Weak', 'Medium', 'Strong'].indexOf(preset) >= 0 ? preset : 'Strong';
     const env = Object.assign({}, process.env, { TERM: 'dumb' });
-    const common = { cwd: dir, timeout: 300000, maxBuffer: 100 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'], env: env };
+    const common = { cwd: dir, timeout: 120000, maxBuffer: 100 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'], env: env };
     try {
       if (safe === 'Strong') {
         // Custom Strong: same protections, single VM layer → much smaller output
@@ -14177,10 +14177,21 @@ function runIB2(source) {
   const output = path.join(tmp, 'output.lua');
   try {
     fs.writeFileSync(input, source, 'utf8');
-    runWithNice(process.execPath, [runJs, input, output, '--encrypt-strings'], {
-      cwd: dir, timeout: 300000, maxBuffer: 100 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'],
+    // Light IB2: still real IronBrew2 VM, but no mega super-ops (those hang for minutes on free tiers)
+    // 75s hard timeout — worker catches and skips so job never sticks at 97%
+    const luacDir = path.dirname(findLuac() || '/usr/bin');
+    const luaDir = path.dirname(findLua() || '/usr/bin');
+    runWithNice(process.execPath, [
+      runJs, input, output,
+      '--encrypt-strings',
+      '--no-super-ops'
+    ], {
+      cwd: dir,
+      timeout: 75000,
+      maxBuffer: 100 * 1024 * 1024,
+      stdio: ['pipe', 'pipe', 'pipe'],
       env: Object.assign({}, process.env, {
-        PATH: path.dirname(findLuac() || '/usr/bin') + ':' + (process.env.PATH || '')
+        PATH: luacDir + ':' + luaDir + ':/usr/bin:/usr/local/bin:' + (process.env.PATH || '')
       })
     });
     if (!fs.existsSync(output)) throw new Error('IB2 sin output');
@@ -14201,7 +14212,7 @@ function runHercules(source) {
   try {
     fs.writeFileSync(input, source, 'utf8');
     runWithNice(lua, [entry, input], {
-      cwd: dir, timeout: 300000, maxBuffer: 100 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe']
+      cwd: dir, timeout: 60000, maxBuffer: 100 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe']
     });
     const files = fs.readdirSync(tmp).filter(function (f) { return f !== 'in.lua'; });
     if (!files.length) throw new Error('Hercules sin output');

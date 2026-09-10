@@ -101,14 +101,14 @@ try {
     save({ progress: 80, logLine: 'Hercules skip' });
   }
 
-  save({ progress: 85, stage: 'ironbrew2', logLine: 'IronBrew2… (VM, puede tardar)' });
+  save({ progress: 85, stage: 'ironbrew2', logLine: 'IronBrew2… (máx ~75s, si tarda se salta)' });
   try {
     code = runIB2(code);
     steps.push('IronBrew2');
     save({ progress: 95, logLine: 'IronBrew2 OK · ' + code.length + ' B' });
   } catch (e) {
     steps.push('IronBrew2:skip');
-    save({ progress: 95, logLine: 'IronBrew2 skip' });
+    save({ progress: 95, logLine: 'IronBrew2 skip (timeout o error) · seguimos con output actual' });
   }
 
   if (!code || !String(code).length) throw new Error('Sin output');
