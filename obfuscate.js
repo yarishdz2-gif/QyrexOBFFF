@@ -13948,25 +13948,65 @@ const PACK_B64 = [
 const PACK_VERSION = 'qyrex-obf-v2';
 let _root = null;
 
-function getRoot() {
-  if (_root && fs.existsSync(path.join(_root, 'Prometheus-master', 'cli.lua'))) return _root;
-  const root = path.join(os.tmpdir(), PACK_VERSION);
-  const marker = path.join(root, '.ok');
-  if (!fs.existsSync(marker)) {
-    fs.mkdirSync(root, { recursive: true });
-    const tgzPath = path.join(os.tmpdir(), 'qyrex-pack-' + process.pid + '.tgz');
-    fs.writeFileSync(tgzPath, Buffer.from(PACK_B64, 'base64'));
+function enginesCandidates() {
+  const list = [];
+  if (process.env.QYREX_ENGINES) list.push(process.env.QYREX_ENGINES);
+  list.push('/app/engines');
+  list.push(path.join(__dirname, 'engines'));
+  list.push(path.join(os.tmpdir(), PACK_VERSION));
+  return list;
+}
+
+function isValidRoot(root) {
+  try {
+    return !!root && fs.existsSync(path.join(root, 'Prometheus-master', 'cli.lua'));
+  } catch (e) {
+    return false;
+  }
+}
+
+function extractPackTo(root) {
+  fs.mkdirSync(root, { recursive: true });
+  const tgzPath = path.join(os.tmpdir(), 'qyrex-pack-' + process.pid + '-' + Date.now() + '.tgz');
+  fs.writeFileSync(tgzPath, Buffer.from(PACK_B64, 'base64'));
+  try {
+    execFileSync('tar', ['-xzf', tgzPath, '-C', root], { stdio: 'pipe', timeout: 300000 });
     try {
-      execFileSync('tar', ['-xzf', tgzPath, '-C', root], { stdio: 'pipe', timeout: 180000 });
-      // make bins executable
-      try {
-        fs.chmodSync(path.join(root, 'bin', 'lua5.1'), 0o755);
-        fs.chmodSync(path.join(root, 'bin', 'luac5.1'), 0o755);
-      } catch (e) {}
-      fs.writeFileSync(marker, '1');
-    } finally {
-      try { fs.unlinkSync(tgzPath); } catch (e) {}
+      fs.chmodSync(path.join(root, 'bin', 'lua5.1'), 0o755);
+      fs.chmodSync(path.join(root, 'bin', 'luac5.1'), 0o755);
+    } catch (e) {}
+    fs.writeFileSync(path.join(root, '.ok'), '1');
+  } finally {
+    try { fs.unlinkSync(tgzPath); } catch (e) {}
+  }
+  if (!isValidRoot(root)) throw new Error('QyrexOBF: extract falló (no cli.lua)');
+}
+
+function getRoot() {
+  if (_root && isValidRoot(_root)) return _root;
+  // Prefer pre-extracted permanent path (Docker build / QYREX_ENGINES)
+  const cands = enginesCandidates();
+  for (let i = 0; i < cands.length; i++) {
+    if (isValidRoot(cands[i])) {
+      _root = cands[i];
+      return _root;
     }
+  }
+  // Extract into first preferred path that is writable (QYREX_ENGINES or /app/engines), else /tmp
+  let root = path.join(os.tmpdir(), PACK_VERSION);
+  for (let i = 0; i < cands.length; i++) {
+    const c = cands[i];
+    if (!c) continue;
+    try {
+      fs.mkdirSync(c, { recursive: true });
+      fs.writeFileSync(path.join(c, '.write-test'), '1');
+      fs.unlinkSync(path.join(c, '.write-test'));
+      root = c;
+      break;
+    } catch (e) {}
+  }
+  if (!isValidRoot(root)) {
+    extractPackTo(root);
   }
   _root = root;
   return root;
@@ -14022,7 +14062,20 @@ function findLuac() {
   return null;
 }
 
+function runWithNice(file, args, opts) {
+  // Lower CPU priority so the Express process keeps answering /job polls on free tiers
+  try {
+    return execFileSync('nice', ['-n', '10', file].concat(args), opts);
+  } catch (e) {
+    if (e && (e.code === 'ENOENT' || /nice/i.test(String(e.message || '')))) {
+      return execFileSync(file, args, opts);
+    }
+    throw e;
+  }
+}
+
 function runPrometheus(source, preset) {
+
   const lua = findLua();
   if (!lua) throw new Error('QyrexOBF: lua5.1 no disponible. Usa el Dockerfile (Docker en Render).');
   const dir = p('Prometheus-master');
@@ -14033,8 +14086,8 @@ function runPrometheus(source, preset) {
     fs.writeFileSync(input, source, 'utf8');
     const safe = ['Minify', 'Weak', 'Medium', 'Strong'].indexOf(preset) >= 0 ? preset : 'Strong';
     try {
-      execFileSync(lua, [path.join(dir, 'cli.lua'), '--preset', safe, '--out', output, input], {
-        cwd: dir, timeout: 180000, maxBuffer: 80 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'],
+      runWithNice(lua, [path.join(dir, 'cli.lua'), '--preset', safe, '--out', output, input], {
+        cwd: dir, timeout: 300000, maxBuffer: 100 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'],
         env: Object.assign({}, process.env, { TERM: 'dumb' })
       });
     } catch (e) {
@@ -14044,8 +14097,8 @@ function runPrometheus(source, preset) {
       // Try Medium once if Strong failed
       if (safe === 'Strong') {
         try {
-          execFileSync(lua, [path.join(dir, 'cli.lua'), '--preset', 'Medium', '--out', output, input], {
-            cwd: dir, timeout: 180000, maxBuffer: 80 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'],
+          runWithNice(lua, [path.join(dir, 'cli.lua'), '--preset', 'Medium', '--out', output, input], {
+            cwd: dir, timeout: 300000, maxBuffer: 100 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'],
             env: Object.assign({}, process.env, { TERM: 'dumb' })
           });
         } catch (e2) {
@@ -14073,8 +14126,8 @@ function runIB2(source) {
   const output = path.join(tmp, 'output.lua');
   try {
     fs.writeFileSync(input, source, 'utf8');
-    execFileSync(process.execPath, [runJs, input, output, '--encrypt-strings'], {
-      cwd: dir, timeout: 180000, maxBuffer: 80 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'],
+    runWithNice(process.execPath, [runJs, input, output, '--encrypt-strings'], {
+      cwd: dir, timeout: 300000, maxBuffer: 100 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'],
       env: Object.assign({}, process.env, {
         PATH: path.dirname(findLuac() || '/usr/bin') + ':' + (process.env.PATH || '')
       })
@@ -14096,8 +14149,8 @@ function runHercules(source) {
   const input = path.join(tmp, 'in.lua');
   try {
     fs.writeFileSync(input, source, 'utf8');
-    execFileSync(lua, [entry, input], {
-      cwd: dir, timeout: 180000, maxBuffer: 80 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe']
+    runWithNice(lua, [entry, input], {
+      cwd: dir, timeout: 300000, maxBuffer: 100 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe']
     });
     const files = fs.readdirSync(tmp).filter(function (f) { return f !== 'in.lua'; });
     if (!files.length) throw new Error('Hercules sin output');
@@ -14108,10 +14161,9 @@ function runHercules(source) {
 }
 
 /**
- * QyrexOBF fused pipeline:
- *   max  = Prometheus Strong → IronBrew2 (default)
- *   strong = Prometheus Strong only
- *   ib2 / hercules = single engine
+ * QyrexOBF fused pipeline (size-optimized):
+ *   max  = AntiTamper + Prometheus Strong  (misma fuerza, tamaño mucho menor)
+ *   (Hercules / IronBrew2 desactivados para evitar prints de 200kB+)
  */
 function stripAnsi(str) {
   return String(str || "").replace(/\u001b\[[0-9;]*m/g, "").replace(/\x1b\[[0-9;]*m/g, "");
@@ -14209,7 +14261,8 @@ function buildAntiTamper() {
 function obfuscate(source, opts) {
   opts = opts || {};
   getRoot();
-  // ALWAYS MAX: AntiTamper → Prometheus Strong → Hercules → IronBrew2
+  // MAX size-optimized: AntiTamper → Prometheus Strong
+  // (Hercules + IronBrew2 se omiten: generan VMs enormes de 150–300kB+)
   const wantAT = opts.antiTamper !== false;
   const steps = [];
   let usedAT = false;
@@ -14220,8 +14273,6 @@ function obfuscate(source, opts) {
     if (tagAT) st.push("AntiTamper:v2");
     let c = runPrometheus(src, "Strong");
     st.push("Prometheus:Strong");
-    try { c = runHercules(c); st.push("Hercules"); } catch (e) { st.push("Hercules:skip"); }
-    try { c = runIB2(c); st.push("IronBrew2"); } catch (e) { st.push("IronBrew2:skip"); }
     return { code: c, steps: st };
   }
 

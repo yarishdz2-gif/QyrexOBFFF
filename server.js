@@ -56,7 +56,7 @@ app.set('trust proxy', 1);
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: '32mb' }));
-app.use(rateLimit({ windowMs: 60000, max: 100, message: { success: false, error: 'Rate limit' } }));
+app.use(rateLimit({ windowMs: 60000, max: 300, message: { success: false, error: 'Rate limit' } }));
 
 function requireKey(req, res, next) {
   if (!API_KEY) return next();

@@ -16,12 +16,20 @@ COPY package.json ./
 RUN npm install --omit=dev
 
 COPY server.js obfuscate.js worker.js index.html ./
-RUN mkdir -p /app/jobs && chmod 777 /app/jobs
+
+# Pre-extract engines at BUILD time → zero runtime tar/base64 cost, stable path
+ENV QYREX_ENGINES=/app/engines
+RUN mkdir -p /app/engines /app/jobs \
+ && node -e "require('./obfuscate').getRoot(); console.log('[build] engines at', require('./obfuscate').getRoot())" \
+ && test -f /app/engines/Prometheus-master/cli.lua \
+ && chmod -R a+rX /app/engines \
+ && chmod 777 /app/jobs
 
 ENV NODE_ENV=production
 ENV PORT=10000
+ENV NODE_OPTIONS=--max-old-space-size=768
 ENV PATH="/usr/local/bin:/usr/bin:${PATH}"
 
 EXPOSE 10000
 
-CMD ["sh", "-c", "mkdir -p /app/jobs && echo [QyrexOBF] lua=$(which lua5.1) && lua5.1 -v && node server.js"]
+CMD ["sh", "-c", "mkdir -p /app/jobs && echo [QyrexOBF] lua=$(which lua5.1) engines=$QYREX_ENGINES && lua5.1 -v && node server.js"]

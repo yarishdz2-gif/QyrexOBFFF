@@ -586,32 +586,75 @@
 
         if (d.async && d.jobId) {
           const jobId = d.jobId;
-          $("logBox").textContent = "Job " + jobId + "\nPipeline MAX en memoria…";
+          $("logBox").textContent = "Job " + jobId + "\nPipeline MAX…\nPrometheus puede tardar 1–3 min (no cierres la pestaña).";
           const t0 = Date.now();
           let emptyStreak = 0;
-          await new Promise((res) => setTimeout(res, 500));
+          let lastOk = Date.now();
+          await new Promise((res) => setTimeout(res, 800));
           while (true) {
-            await new Promise((res) => setTimeout(res, 1000));
+            await new Promise((res) => setTimeout(res, 1500));
             let pd = null;
+            let statusCode = 0;
             try {
-              const pr = await fetch("/job/" + encodeURIComponent(jobId), { headers });
+              const pr = await fetch("/job/" + encodeURIComponent(jobId), {
+                headers,
+                cache: "no-store"
+              });
+              statusCode = pr.status;
               const ptxt = await pr.text();
+              // 502/503/504 = host saturado (Prometheus CPU) → reintentar, NO abortar
+              if (statusCode === 502 || statusCode === 503 || statusCode === 504) {
+                emptyStreak++;
+                const line = "host ocupado (" + statusCode + ") #" + emptyStreak + " — esperando…";
+                if (emptyStreak === 1 || emptyStreak % 5 === 0) {
+                  $("logBox").textContent += "\n" + line;
+                }
+                st.className = "status warn";
+                st.textContent = "MAX · host ocupado · " + Math.round((Date.now() - t0) / 1000) + "s";
+                // hasta ~3 min de 503 seguidos antes de fallar
+                if (emptyStreak >= 120) {
+                  throw new Error("Host no responde (503). Render free se saturó con Prometheus. Reintenta o usa un script más corto.");
+                }
+                continue;
+              }
               if (!ptxt || !ptxt.trim()) {
                 emptyStreak++;
-                $("logBox").textContent += "\\n(poll vacío #" + emptyStreak + " status " + pr.status + ")";
-                if (emptyStreak >= 8) throw new Error("Poll vacío repetido — el worker o el host se cayó. Revisa logs de Render.");
+                if (emptyStreak >= 40) {
+                  throw new Error("Poll vacío repetido — worker o host caído. Revisa logs de Render.");
+                }
+                continue;
+              }
+              try {
+                pd = JSON.parse(ptxt);
+              } catch (_) {
+                emptyStreak++;
+                continue;
+              }
+              // 404 job missing: solo fallar si llevamos mucho sin éxito (redeploy real)
+              if (pd && (pd.status === "missing" || (pd.success === false && /no encontrado|not found/i.test(String(pd.error || ""))))) {
+                emptyStreak++;
+                $("logBox").textContent += "\n(job no visible aún #" + emptyStreak + ")";
+                if (emptyStreak >= 30 && Date.now() - lastOk > 90000) {
+                  throw new Error(pd.error || "Job no encontrado (¿redeploy a mitad?).");
+                }
                 continue;
               }
               emptyStreak = 0;
-              pd = JSON.parse(ptxt);
+              lastOk = Date.now();
             } catch (pe) {
-              if (String(pe.message || pe).includes("Poll vacío")) throw pe;
+              const m = String(pe && pe.message || pe);
+              if (m.includes("Host no responde") || m.includes("Poll vacío") || m.includes("Job no encontrado")) throw pe;
               emptyStreak++;
-              if (emptyStreak >= 8) throw new Error("No se pudo consultar el job: " + (pe.message || pe));
+              if (emptyStreak >= 60) throw new Error("No se pudo consultar el job: " + m);
               continue;
             }
 
             renderProgress(Object.assign({ elapsedMs: Date.now() - t0 }, pd));
+            if (pd.logs && pd.logs.length) {
+              $("logBox").textContent = pd.logs.join("\n");
+            } else if (pd.lastLog) {
+              $("logBox").textContent = pd.lastLog;
+            }
 
             if (pd.code && pd.success) {
               $("out").value = pd.code;
@@ -627,11 +670,11 @@
             if (pd.success === false || pd.status === "error") {
               throw new Error(pd.error || "Job falló");
             }
-            if (Date.now() - t0 > 20 * 60 * 1000) {
-              throw new Error("Timeout 20 min");
+            if (Date.now() - t0 > 25 * 60 * 1000) {
+              throw new Error("Timeout 25 min");
             }
           }
-        } else if (d.code) {
+        }        } else if (d.code) {
           $("out").value = d.code;
           st.className = "status ok";
           st.textContent = "MAX listo";
