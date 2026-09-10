@@ -123,19 +123,57 @@ app.post('/obfuscate', requireKey, (req, res) => {
     children.set(id, child);
     writeMeta(id, { status: 'running', progress: 4, stage: 'spawn', pid: child.pid, logLine: 'Worker PID ' + child.pid });
 
-    // Parent heartbeat while child blocked in lua — UI keeps moving
+    // Parent heartbeat while child blocked in lua — UI keeps moving past 88
     const beat = setInterval(() => {
       const m = readMeta(id);
       if (!m || m.status === 'done' || m.status === 'error') {
         clearInterval(beat);
         return;
       }
+      // Worker muerto sin marcar done/error
+      try {
+        if (child.killed || (child.exitCode !== null && child.exitCode !== undefined)) {
+          // exit handler will clean; skip
+        } else if (m.pid) {
+          try { process.kill(m.pid, 0); } catch (_) {
+            writeMeta(id, {
+              status: 'error',
+              progress: 100,
+              stage: 'error',
+              error: 'Worker murió sin terminar (OOM o kill del host)',
+              logLine: 'Worker PID muerto'
+            });
+            clearInterval(beat);
+            return;
+          }
+        }
+      } catch (_) {}
+
       let p = typeof m.progress === 'number' ? m.progress : 4;
+      // Sube hasta 97 mientras sigue vivo (nunca 100 hasta done real)
       if (p < 88) p += 1;
+      else if (p < 97) p += 0.25;
+      p = Math.min(97, Math.round(p * 100) / 100);
+
+      const elapsed = Date.now() - (m.createdAt || Date.now());
+      const sec = Math.round(elapsed / 1000);
+      const stage = m.stage || 'running';
+      let hint = m.lastLog || '';
+      if (stage === 'prometheus' || /prometheus/i.test(String(m.lastLog || ''))) {
+        hint = 'Prometheus trabajando · ' + sec + 's (puede tardar 1–3 min)';
+      } else if (stage === 'hercules') {
+        hint = 'Hercules · ' + sec + 's';
+      } else if (stage === 'ironbrew2') {
+        hint = 'IronBrew2 · ' + sec + 's';
+      } else if (p >= 88) {
+        hint = 'Sigue procesando · ' + sec + 's (no está trabado)';
+      }
+
       writeMeta(id, {
         progress: p,
-        elapsedMs: Date.now() - (m.createdAt || Date.now()),
-        heartbeat: Date.now()
+        elapsedMs: elapsed,
+        heartbeat: Date.now(),
+        logLine: hint
       });
     }, 2000);
 

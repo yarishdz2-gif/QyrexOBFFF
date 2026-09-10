@@ -533,8 +533,9 @@
 
       function renderProgress(pd) {
         const p = Math.max(1, Math.min(100, Number(pd.progress) || 1));
-        $("progBar").style.width = p + "%";
-        $("progEta").textContent = p + "%";
+        const pShow = Math.floor(p);
+        $("progBar").style.width = pShow + "%";
+        $("progEta").textContent = pShow + "%";
         const stageMap = {
           queued: "En cola",
           spawn: "Arrancando worker",

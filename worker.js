@@ -73,7 +73,7 @@ try {
     }
   }
 
-  save({ progress: 32, stage: 'prometheus', logLine: 'Prometheus Strong (30–120s, espera)…' });
+  save({ progress: 32, stage: 'prometheus', logLine: 'Prometheus Strong… puede tardar 1–3 min, la barra subirá despacio' });
   try {
     code = runPrometheus(code, 'Strong');
     steps.push('Prometheus:Strong');
@@ -101,7 +101,7 @@ try {
     save({ progress: 80, logLine: 'Hercules skip' });
   }
 
-  save({ progress: 85, stage: 'ironbrew2', logLine: 'IronBrew2…' });
+  save({ progress: 85, stage: 'ironbrew2', logLine: 'IronBrew2… (VM, puede tardar)' });
   try {
     code = runIB2(code);
     steps.push('IronBrew2');
