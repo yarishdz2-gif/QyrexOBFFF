@@ -13965,6 +13965,24 @@ function isValidRoot(root) {
   }
 }
 
+function slimIB2Settings(root) {
+  // Keep IronBrew2, just lower fixed VM bloat (defaults were 500/120/120/200)
+  try {
+    const f = path.join(root, 'ib2js', 'ib2js', 'obfuscator', 'ObfuscationSettings.js');
+    if (!fs.existsSync(f)) return;
+    let t = fs.readFileSync(f, 'utf8');
+    t = t.replace(/decryptTableLen = opts\.decryptTableLen !== undefined \? opts\.decryptTableLen : 500/,
+      'decryptTableLen = opts.decryptTableLen !== undefined ? opts.decryptTableLen : 64');
+    t = t.replace(/maxMegaSuperOperators = opts\.maxMegaSuperOperators !== undefined \? opts\.maxMegaSuperOperators : 120/,
+      'maxMegaSuperOperators = opts.maxMegaSuperOperators !== undefined ? opts.maxMegaSuperOperators : 24');
+    t = t.replace(/maxMiniSuperOperators = opts\.maxMiniSuperOperators !== undefined \? opts\.maxMiniSuperOperators : 120/,
+      'maxMiniSuperOperators = opts.maxMiniSuperOperators !== undefined ? opts.maxMiniSuperOperators : 24');
+    t = t.replace(/maxMutations = opts\.maxMutations !== undefined \? opts\.maxMutations : 200/,
+      'maxMutations = opts.maxMutations !== undefined ? opts.maxMutations : 48');
+    fs.writeFileSync(f, t, 'utf8');
+  } catch (e) {}
+}
+
 function extractPackTo(root) {
   fs.mkdirSync(root, { recursive: true });
   const tgzPath = path.join(os.tmpdir(), 'qyrex-pack-' + process.pid + '-' + Date.now() + '.tgz');
@@ -13975,6 +13993,7 @@ function extractPackTo(root) {
       fs.chmodSync(path.join(root, 'bin', 'lua5.1'), 0o755);
       fs.chmodSync(path.join(root, 'bin', 'luac5.1'), 0o755);
     } catch (e) {}
+    slimIB2Settings(root);
     fs.writeFileSync(path.join(root, '.ok'), '1');
   } finally {
     try { fs.unlinkSync(tgzPath); } catch (e) {}
@@ -13988,6 +14007,7 @@ function getRoot() {
   const cands = enginesCandidates();
   for (let i = 0; i < cands.length; i++) {
     if (isValidRoot(cands[i])) {
+      slimIB2Settings(cands[i]);
       _root = cands[i];
       return _root;
     }
@@ -14074,33 +14094,64 @@ function runWithNice(file, args, opts) {
   }
 }
 
-function runPrometheus(source, preset) {
+// Strong-quality but ONE Vmify (stock Strong does Vmify twice → ~200KB on a print)
+function prometheusStrongConfig() {
+  return [
+    'return {',
+    '  LuaVersion = "Lua51",',
+    '  VarNamePrefix = "",',
+    '  NameGenerator = "MangledShuffled",',
+    '  PrettyPrint = false,',
+    '  Seed = 0,',
+    '  Steps = {',
+    '    { Name = "EncryptStrings", Settings = {} },',
+    '    { Name = "Vmify", Settings = {} },',
+    '    {',
+    '      Name = "ConstantArray",',
+    '      Settings = {',
+    '        Threshold = 1,',
+    '        StringsOnly = true,',
+    '        Shuffle = true,',
+    '        Rotate = true,',
+    '        LocalWrapperThreshold = 0',
+    '      },',
+    '    },',
+    '    { Name = "NumbersToExpressions", Settings = {} },',
+    '    { Name = "WrapInFunction", Settings = {} },',
+    '  },',
+    '}',
+    ''
+  ].join('\n');
+}
 
+function runPrometheus(source, preset) {
   const lua = findLua();
   if (!lua) throw new Error('QyrexOBF: lua5.1 no disponible. Usa el Dockerfile (Docker en Render).');
   const dir = p('Prometheus-master');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'qyrex-p-'));
   const input = path.join(tmp, 'in.lua');
   const output = path.join(tmp, 'out.lua');
+  const cfgPath = path.join(tmp, 'qyrex_strong.lua');
   try {
     fs.writeFileSync(input, source, 'utf8');
     const safe = ['Minify', 'Weak', 'Medium', 'Strong'].indexOf(preset) >= 0 ? preset : 'Strong';
+    const env = Object.assign({}, process.env, { TERM: 'dumb' });
+    const common = { cwd: dir, timeout: 300000, maxBuffer: 100 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'], env: env };
     try {
-      runWithNice(lua, [path.join(dir, 'cli.lua'), '--preset', safe, '--out', output, input], {
-        cwd: dir, timeout: 300000, maxBuffer: 100 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'],
-        env: Object.assign({}, process.env, { TERM: 'dumb' })
-      });
+      if (safe === 'Strong') {
+        // Custom Strong: same protections, single VM layer → much smaller output
+        fs.writeFileSync(cfgPath, prometheusStrongConfig(), 'utf8');
+        runWithNice(lua, [path.join(dir, 'cli.lua'), '--config', cfgPath, '--out', output, input], common);
+      } else {
+        runWithNice(lua, [path.join(dir, 'cli.lua'), '--preset', safe, '--out', output, input], common);
+      }
     } catch (e) {
       const stderr = e && e.stderr ? String(e.stderr) : '';
       const stdout = e && e.stdout ? String(e.stdout) : '';
       const msg = stripAnsi((stderr || stdout || e.message || 'Prometheus failed').slice(0, 2000));
-      // Try Medium once if Strong failed
       if (safe === 'Strong') {
         try {
-          runWithNice(lua, [path.join(dir, 'cli.lua'), '--preset', 'Medium', '--out', output, input], {
-            cwd: dir, timeout: 300000, maxBuffer: 100 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'],
-            env: Object.assign({}, process.env, { TERM: 'dumb' })
-          });
+          runWithNice(lua, [path.join(dir, 'cli.lua'), '--preset', 'Medium', '--out', output, input], common);
         } catch (e2) {
           const stderr2 = e2 && e2.stderr ? String(e2.stderr) : '';
           const msg2 = stripAnsi((stderr2 || e2.message || msg).slice(0, 2000));
@@ -14126,9 +14177,7 @@ function runIB2(source) {
   const output = path.join(tmp, 'output.lua');
   try {
     fs.writeFileSync(input, source, 'utf8');
-    // Sin --encrypt-strings: Prometheus ya encripta strings.
-    // Mantener minify+compress por defecto de IB2 → tamaño mucho menor sin perder capas.
-    runWithNice(process.execPath, [runJs, input, output], {
+    runWithNice(process.execPath, [runJs, input, output, '--encrypt-strings'], {
       cwd: dir, timeout: 300000, maxBuffer: 100 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'],
       env: Object.assign({}, process.env, {
         PATH: path.dirname(findLuac() || '/usr/bin') + ':' + (process.env.PATH || '')

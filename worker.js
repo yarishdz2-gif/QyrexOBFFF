@@ -112,8 +112,6 @@ try {
   }
 
   if (!code || !String(code).length) throw new Error('Sin output');
-  // Limpieza ligera de espacios/newlines extras (no toca la ofuscación)
-  code = String(code).replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
   const header = '--QyrexObf [qyrex.hopto.org]\n';
   if (!String(code).startsWith('--QyrexObf')) code = header + code;
 
