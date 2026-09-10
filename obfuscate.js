@@ -14126,7 +14126,9 @@ function runIB2(source) {
   const output = path.join(tmp, 'output.lua');
   try {
     fs.writeFileSync(input, source, 'utf8');
-    runWithNice(process.execPath, [runJs, input, output, '--encrypt-strings'], {
+    // Sin --encrypt-strings: Prometheus ya encripta strings.
+    // Mantener minify+compress por defecto de IB2 → tamaño mucho menor sin perder capas.
+    runWithNice(process.execPath, [runJs, input, output], {
       cwd: dir, timeout: 300000, maxBuffer: 100 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'],
       env: Object.assign({}, process.env, {
         PATH: path.dirname(findLuac() || '/usr/bin') + ':' + (process.env.PATH || '')
@@ -14161,9 +14163,10 @@ function runHercules(source) {
 }
 
 /**
- * QyrexOBF fused pipeline (size-optimized):
- *   max  = AntiTamper + Prometheus Strong  (misma fuerza, tamaño mucho menor)
- *   (Hercules / IronBrew2 desactivados para evitar prints de 200kB+)
+ * QyrexOBF fused pipeline:
+ *   max  = Prometheus Strong → IronBrew2 (default)
+ *   strong = Prometheus Strong only
+ *   ib2 / hercules = single engine
  */
 function stripAnsi(str) {
   return String(str || "").replace(/\u001b\[[0-9;]*m/g, "").replace(/\x1b\[[0-9;]*m/g, "");
@@ -14261,8 +14264,7 @@ function buildAntiTamper() {
 function obfuscate(source, opts) {
   opts = opts || {};
   getRoot();
-  // MAX size-optimized: AntiTamper → Prometheus Strong
-  // (Hercules + IronBrew2 se omiten: generan VMs enormes de 150–300kB+)
+  // ALWAYS MAX: AntiTamper → Prometheus Strong → Hercules → IronBrew2
   const wantAT = opts.antiTamper !== false;
   const steps = [];
   let usedAT = false;
@@ -14273,6 +14275,8 @@ function obfuscate(source, opts) {
     if (tagAT) st.push("AntiTamper:v2");
     let c = runPrometheus(src, "Strong");
     st.push("Prometheus:Strong");
+    try { c = runHercules(c); st.push("Hercules"); } catch (e) { st.push("Hercules:skip"); }
+    try { c = runIB2(c); st.push("IronBrew2"); } catch (e) { st.push("IronBrew2:skip"); }
     return { code: c, steps: st };
   }
 

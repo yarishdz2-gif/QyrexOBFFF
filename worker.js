@@ -41,7 +41,7 @@ try {
 
   const {
     findLua, getRoot, buildAntiTamper,
-    runPrometheus
+    runPrometheus, runHercules, runIB2
   } = require('./obfuscate');
 
   if (!findLua()) throw new Error('lua5.1 no encontrado');
@@ -73,27 +73,47 @@ try {
     }
   }
 
-  // Solo Prometheus Strong (+ AntiTamper): máxima ofuscación con tamaño mucho más bajo
-  // Hercules + IronBrew2 multiplican el tamaño (VM layers) y producen prints de 150–300kB+
   save({ progress: 32, stage: 'prometheus', logLine: 'Prometheus Strong (30–120s, espera)…' });
   try {
     code = runPrometheus(code, 'Strong');
     steps.push('Prometheus:Strong');
-    save({ progress: 90, logLine: 'Prometheus Strong OK · ' + code.length + ' B' });
+    save({ progress: 58, logLine: 'Prometheus Strong OK · ' + code.length + ' B' });
   } catch (e1) {
     save({ progress: 40, stage: 'prometheus-medium', logLine: 'Strong falló → Medium…' });
     try {
       code = runPrometheus(code, 'Medium');
       steps.push('Prometheus:Medium');
-      save({ progress: 90, logLine: 'Prometheus Medium OK · ' + code.length + ' B' });
+      save({ progress: 58, logLine: 'Prometheus Medium OK' });
     } catch (e2) {
       code = runPrometheus(source, 'Medium');
       steps.push('Prometheus:Medium:clean');
-      save({ progress: 90, logLine: 'Prometheus Medium clean OK · ' + code.length + ' B' });
+      save({ progress: 58, logLine: 'Prometheus Medium clean OK' });
     }
   }
 
+  save({ progress: 65, stage: 'hercules', logLine: 'Hercules…' });
+  try {
+    code = runHercules(code);
+    steps.push('Hercules');
+    save({ progress: 80, logLine: 'Hercules OK · ' + code.length + ' B' });
+  } catch (e) {
+    steps.push('Hercules:skip');
+    save({ progress: 80, logLine: 'Hercules skip' });
+  }
+
+  save({ progress: 85, stage: 'ironbrew2', logLine: 'IronBrew2…' });
+  try {
+    code = runIB2(code);
+    steps.push('IronBrew2');
+    save({ progress: 95, logLine: 'IronBrew2 OK · ' + code.length + ' B' });
+  } catch (e) {
+    steps.push('IronBrew2:skip');
+    save({ progress: 95, logLine: 'IronBrew2 skip' });
+  }
+
   if (!code || !String(code).length) throw new Error('Sin output');
+  // Limpieza ligera de espacios/newlines extras (no toca la ofuscación)
+  code = String(code).replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
   const header = '--QyrexObf [qyrex.hopto.org]\n';
   if (!String(code).startsWith('--QyrexObf')) code = header + code;
 
@@ -116,7 +136,7 @@ try {
   let msg = String(err && (err.message || err)).slice(0, 2000);
   const code = err && err.code;
   if (code === 'ETIMEDOUT' || /ETIMEDOUT|timed out|timeout/i.test(msg)) {
-    msg = 'Timeout de engine (Prometheus). Script muy pesado o host lento. Prueba sin AntiTamper o un script más corto. Detalle: ' + msg.slice(0, 400);
+    msg = 'Timeout de engine (Prometheus/Hercules/IB2). Script muy pesado o host lento. Prueba sin AntiTamper o un script más corto. Detalle: ' + msg.slice(0, 400);
   } else if (code === 'ENOMEM' || /heap|out of memory|ENOMEM/i.test(msg)) {
     msg = 'Sin memoria (OOM). Sube el plan o reduce tamaño del script. ' + msg.slice(0, 300);
   }
