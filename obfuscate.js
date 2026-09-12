@@ -14256,8 +14256,9 @@ function stripAnsi(str) {
 }
 
 function buildAntiTamper() {
-  // Lua 5.1–safe anti-tamper (no XOR, no Base64, no Luau syntax)
+  // Lua 5.1–safe anti-tamper v3 (hardened)
   // Keys randomized per build; strings encoded with position-keyed additive cipher
+  // Inspired by techniques from Hercules / MoonSec / Prometheus anti-analysis patterns
   function posKeyEncode(str, key) {
     const t = [];
     for (let i = 0; i < str.length; i++) {
@@ -14271,22 +14272,26 @@ function buildAntiTamper() {
   const stopKey = rndKey();
   const markerKey = rndKey();
   const stopBytes = posKeyEncode("stop skidding", stopKey);
-  const markerBytes = posKeyEncode("AT1_OK_" + Math.floor(10000 + Math.random() * 89999), markerKey);
+  const markerBytes = posKeyEncode("AT3_OK_" + Math.floor(10000 + Math.random() * 89999), markerKey);
 
   return [
     "do",
     "local function _pk_dec(t,k) local r={} for i=1,#t do local ki=(k*((i%11)+1)+i*7+(k%31))%256 r[i]=string.char((t[i]-ki+512)%256) end return table.concat(r) end",
     "local _stop=_pk_dec({" + stopBytes.join(",") + "}," + stopKey + ")",
     "local function _crash() local t while true do t={t} end end",
-    "local _type,_pcall,_error=type,pcall,error",
+    "local _type,_pcall,_error,_select=type,pcall,error,select",
     "local _find,_tostring,_tonumber=string.find,tostring,tonumber",
-    "local _floor,_random=math.floor,math.random",
+    "local _floor,_random,_abs=math.floor,math.random,math.abs",
     "local _unpack=table.unpack or unpack",
-    // env probe
-    "do local G=_G or {} local S={\"lune\",\"lute\",\"wally\",\"rojo\",\"selene\",\"darklua\",\"remodel\",\"tarmac\",\"stylua\",\"lemur\",\"busted\",\"process\",\"window\",\"document\",\"navigator\",\"localStorage\",\"globalThis\",\"__dirname\",\"__filename\"}",
-    "for i=1,#S do if rawget(G,S[i])~=nil then _crash() end end",
-    "if type(G.process)==\"table\" and (G.process.env or G.process.platform) then _crash() end end",
-    // primitives
+    "local _rawget,_rawset=rawget,rawset",
+    "local _getfenv,_setfenv=getfenv,setfenv",
+    // env / tool probe (expanded)
+    "do local G=_G or getfenv and getfenv(0) or {}",
+    "local S={\"lune\",\"lute\",\"wally\",\"rojo\",\"selene\",\"darklua\",\"remodel\",\"tarmac\",\"stylua\",\"lemur\",\"busted\",\"process\",\"window\",\"document\",\"navigator\",\"localStorage\",\"globalThis\",\"__dirname\",\"__filename\",\"js\",\"SYN\",\"is_synapse_function\",\"is_protosmasher_closure\",\"is_sirhurt_closure\",\"secure_call\",\"hookfunction\",\"hookmetamethod\",\"getrawmetatable\",\"setreadonly\",\"checkcaller\",\"getcallingscript\",\"getnamecallmethod\",\"newcclosure\",\"islclosure\",\"isexecutorclosure\",\"getgenv\",\"getrenv\",\"getsenv\",\"getreg\",\"getgc\",\"getinstances\",\"getnilinstances\",\"getscripts\",\"getloadedmodules\",\"getconnections\",\"firesignal\",\"fireclickdetector\",\"fireproximityprompt\",\"sethiddenproperty\",\"gethiddenproperty\",\"setsimulationradius\",\"getsimulationradius\",\"Drawing\",\"crypt\",\"base64\",\"http\",\"syn\",\"KRNL\",\"Fluxus\",\"ScriptWare\",\"Electron\",\"Valyse\",\"Delta\",\"Codex\",\"Solara\",\"Wave\",\"Xeno\",\"Arceus\",\"Potassium\"}",
+    "for i=1,#S do if _rawget(G,S[i])~=nil then _crash() end end",
+    "if _type(G.process)==\"table\" and (G.process.env or G.process.platform) then _crash() end",
+    "if _type(G.js)==\"table\" or _type(G.JS)==\"table\" then _crash() end end",
+    // primitives + integrity
     "if _type(game)~=\"userdata\" or _type(Enum)~=\"userdata\" then _crash() end",
     "if string.byte(\"A\")~=65 or math.floor(3.9)~=3 or math.floor(math.pi)~=3 then _crash() end",
     "if _type(string)~=\"table\" or _type(math)~=\"table\" or _type(table)~=\"table\" then _crash() end",
@@ -14295,18 +14300,21 @@ function buildAntiTamper() {
     "if _type(typeof)==\"function\" and typeof(game)==\"table\" then _crash() end",
     "do local okMt,mt=_pcall(getmetatable,game) if okMt and _type(mt)==_type({}) then _crash() end end",
     "do local n=0/0 if n==n then _crash() end end",
+    "do local a,b=1,1 if a+b~=2 or a*b~=1 then _crash() end end",
+    // identity / debug
+    "do local okI,id=_pcall(function() return debug and debug.getinfo and debug.getinfo(1) end) if okI and id and id.what==\"C\" then end end",
     // sandbox fingerprints
     "local function _sg(o,k) local ok,v=_pcall(function() return o[k] end) return ok,v end",
-    "do local ok,j=_sg(game,\"JobId\") if ok and j==\"00000000-0000-0000-0000-000000000000\" then _crash() end end",
-    "do local ok,p=_sg(game,\"PlaceId\") if ok and p==8916037983 then _crash() end end",
-    "do local ok,g=_sg(game,\"GameId\") if ok and g==8916037983 then _crash() end end",
+    "do local ok,j=_sg(game,\"JobId\") if ok and (j==\"00000000-0000-0000-0000-000000000000\" or j==\"\" or j==nil) then _crash() end end",
+    "do local ok,p=_sg(game,\"PlaceId\") if ok and (p==0 or p==8916037983 or p==nil) then _crash() end end",
+    "do local ok,g=_sg(game,\"GameId\") if ok and (g==0 or g==8916037983) then _crash() end end",
     "local okPl,Players=_pcall(function() return game:GetService(\"Players\") end)",
     "if not okPl or Players==nil then _crash() end",
     "local LP do local ok,v=_sg(Players,\"LocalPlayer\") if ok then LP=v end end",
     "if LP==nil then _crash() end",
-    "do local ok,uid=_sg(LP,\"UserId\") if ok and uid==123456789 then _crash() end end",
-    "do local ok,nm=_sg(LP,\"Name\") if ok and nm==\"vole7vin\" then _crash() end end",
-    // stats / data ping
+    "do local ok,uid=_sg(LP,\"UserId\") if ok and (uid==0 or uid==123456789 or uid==nil) then _crash() end end",
+    "do local ok,nm=_sg(LP,\"Name\") if ok and (nm==\"vole7vin\" or nm==\"Player\" or nm==\"\") then _crash() end end",
+    // stats / data ping (real network)
     "do local okSt,Stats=_pcall(function() return game:GetService(\"Stats\") end)",
     "if not okSt or not Stats then _crash() end",
     "local okNet,Net=_sg(Stats,\"Network\") if not okNet or not Net then _crash() end",
@@ -14315,19 +14323,23 @@ function buildAntiTamper() {
     "local okGV,gv=_sg(DP,\"GetValue\") if not okGV or _type(gv)~=\"function\" then _crash() end",
     "local okPing,pv=_pcall(gv,DP) if not okPing or pv==nil or pv==\"\" or pv==0 then _crash() end",
     "if _floor(_tonumber(pv) or 0)==0 then _crash() end end",
-    // coregui
+    // coregui + robloxgui
     "do local okC,CG=_pcall(function() return game:GetService(\"CoreGui\") end)",
     "if not okC or not CG then _crash() end",
     "local okR,RG=_pcall(function() return CG:FindFirstChild(\"RobloxGui\") end)",
     "if not okR or not RG then _crash() end end",
-    // marker probe
+    // RunService heartbeat existence
+    "do local okRS,RS=_pcall(function() return game:GetService(\"RunService\") end)",
+    "if not okRS or not RS then _crash() end",
+    "local okHB,hb=_sg(RS,\"Heartbeat\") if not okHB or not hb then _crash() end end",
+    // marker probe (error message integrity)
     "local _marker=_pk_dec({" + markerBytes.join(",") + "}," + markerKey + ")",
     "local function _probe(fn) local ok,err=_pcall(fn) if _type(err)~=\"string\" then return false end return _find(err,_marker,1,true)~=nil end",
-    "for _=1,5 do if not _probe(function() _error(_marker) end) then _crash() end end",
-    // accumulator
+    "for _=1,7 do if not _probe(function() _error(_marker) end) then _crash() end end",
+    // accumulator integrity (pcall + unpack + random)
     "do local valid=true local intact2=false local intact=_pcall(function() intact2=true end) and intact2",
     "if not intact then _crash() end",
-    "local acc1,acc2,len=0,0,48",
+    "local acc1,acc2,len=0,0,64",
     "for i=1,len do",
     "local n2=i%256 local pos=i%len+1 local shouldErr=(i%2==0)",
     "local eMsg=\"E#\".._tostring(i)",
@@ -14339,6 +14351,8 @@ function buildAntiTamper() {
     "if shouldErr then valid=valid and arr[1]==false else valid=valid and arr[1] acc1=(acc1+(arr[pos+1] or 0))%256 acc2=(acc2+n2)%256 end",
     "end",
     "if not (valid and acc1==acc2) then _crash() end end",
+    // final env lock
+    "do local okF=_pcall(function() if _getfenv then local e=_getfenv(0) if e~=_G and e~=nil then _crash() end end end) if not okF then _crash() end end",
     "end",
     ""
   ].join(String.fromCharCode(10));
@@ -14347,46 +14361,119 @@ function buildAntiTamper() {
 function obfuscate(source, opts) {
   opts = opts || {};
   getRoot();
-  // ALWAYS MAX: AntiTamper → Prometheus Strong → Hercules → IronBrew2
+  const mode = String(opts.mode || "max").toLowerCase();
   const wantAT = opts.antiTamper !== false;
   const steps = [];
   let usedAT = false;
   let code;
+  let finalMode = mode;
 
-  function fullMax(src, tagAT) {
+  function runPipeline(src, tagAT, pipelineMode) {
     const st = [];
-    if (tagAT) st.push("AntiTamper:v2");
-    let c = runPrometheus(src, "Strong");
-    st.push("Prometheus:Strong");
-    try { c = runHercules(c); st.push("Hercules"); } catch (e) { st.push("Hercules:skip"); }
-    try { c = runIB2(c); st.push("IronBrew2"); } catch (e) { st.push("IronBrew2:skip"); }
+    if (tagAT) st.push("AntiTamper:v3");
+    let c = src;
+
+    if (pipelineMode === "max" || pipelineMode === "strong") {
+      try {
+        c = runPrometheus(c, "Strong");
+        st.push("Prometheus:Strong");
+      } catch (e) {
+        st.push("Prometheus:fail");
+        throw e;
+      }
+    }
+
+    if (pipelineMode === "max") {
+      try {
+        c = runHercules(c);
+        st.push("Hercules");
+      } catch (e) {
+        st.push("Hercules:skip");
+      }
+      try {
+        c = runIB2(c);
+        st.push("IronBrew2");
+      } catch (e) {
+        st.push("IronBrew2:skip");
+      }
+    } else if (pipelineMode === "ib2" || pipelineMode === "ironbrew") {
+      try {
+        c = runIB2(c);
+        st.push("IronBrew2");
+      } catch (e) {
+        st.push("IronBrew2:fail");
+        throw e;
+      }
+    } else if (pipelineMode === "hercules") {
+      try {
+        c = runHercules(c);
+        st.push("Hercules");
+      } catch (e) {
+        st.push("Hercules:fail");
+        throw e;
+      }
+    } else if (pipelineMode === "prometheus" || pipelineMode === "strong") {
+      // already ran above
+    } else {
+      // fallback max
+      try {
+        c = runPrometheus(c, "Strong");
+        st.push("Prometheus:Strong");
+      } catch (e) {
+        st.push("Prometheus:fail");
+        throw e;
+      }
+      try { c = runHercules(c); st.push("Hercules"); } catch (e) { st.push("Hercules:skip"); }
+      try { c = runIB2(c); st.push("IronBrew2"); } catch (e) { st.push("IronBrew2:skip"); }
+    }
+
     return { code: c, steps: st };
   }
+
+  const pipeline = (mode === "max" || mode === "strong" || mode === "ib2" || mode === "ironbrew" || mode === "hercules" || mode === "prometheus")
+    ? mode
+    : "max";
 
   if (wantAT) {
     try {
       const at = buildAntiTamper();
-      const r = fullMax(at + "\n" + source, true);
+      const r = runPipeline(at + "\n" + source, true, pipeline);
       code = r.code;
       steps.push.apply(steps, r.steps);
       usedAT = true;
     } catch (e) {
       steps.push("AntiTamper:fallback");
-      const r = fullMax(source, false);
+      const r = runPipeline(source, false, pipeline);
       code = r.code;
       steps.push.apply(steps, r.steps);
     }
   } else {
-    const r = fullMax(source, false);
+    const r = runPipeline(source, false, pipeline);
     code = r.code;
     steps.push.apply(steps, r.steps);
   }
 
-  const header = "--QyrexObf [qyrex.hopto.org]\n";
+  const header = "--QyrexObf v2.2 MAX [qyrex.hopto.org]\n";
   if (typeof code === "string" && !code.startsWith("--QyrexObf")) {
     code = header + code;
   }
-  return { code: code, engine: "QyrexOBF", steps: steps, antiTamper: usedAT, mode: "max" };
+  return {
+    code: code,
+    engine: "QyrexOBF",
+    steps: steps,
+    antiTamper: usedAT,
+    mode: finalMode || pipeline
+  };
 }
 
-module.exports = { obfuscate: obfuscate, getRoot: getRoot, findLua: findLua, findLua54: findLua54, findLuac: findLuac, runPrometheus: runPrometheus, runHercules: runHercules, runIB2: runIB2, buildAntiTamper: buildAntiTamper };
+module.exports = {
+  obfuscate: obfuscate,
+  getRoot: getRoot,
+  findLua: findLua,
+  findLua54: findLua54,
+  findLuac: findLuac,
+  runPrometheus: runPrometheus,
+  runHercules: runHercules,
+  runIB2: runIB2,
+  buildAntiTamper: buildAntiTamper
+};
