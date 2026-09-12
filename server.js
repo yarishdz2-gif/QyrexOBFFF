@@ -1,5 +1,9 @@
 'use strict';
 
+/**
+ * QyrexOBF Pure Node server — same API surface as v2, 100% Node (no lua binaries)
+ */
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -8,7 +12,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
-const { findLua, findLuac, getRoot } = require('./obfuscate');
+const { obfuscate, getRoot } = require('./obfuscate');
 
 function stripAnsi(str) {
   return String(str || '')
@@ -66,157 +70,120 @@ function requireKey(req, res, next) {
 }
 
 app.get('/health', (req, res) => {
-  let engines = false;
-  try { engines = fs.existsSync(path.join(getRoot(), 'Prometheus-master', 'cli.lua')); } catch (e) {}
   res.json({
-    ok: !!(findLua() && engines),
-    product: 'QyrexOBF v2',
-    mode: 'max',
-    jobRoot: JOB_ROOT,
-    activeChildren: children.size,
-    lua: findLua(),
-    enginesReady: engines,
-    uptime: process.uptime()
+    ok: true,
+    pureNode: true,
+    product: 'QyrexOBF PureNode v3',
+    node: process.version,
+    enginesReady: true,
+    lua: null
   });
 });
 
 app.post('/obfuscate', requireKey, (req, res) => {
   try {
-    const source = (req.body && (req.body.source || req.body.code)) || '';
-    if (!source || String(source).trim().length < 2) {
-      return res.status(400).json({ success: false, error: 'Missing source' });
-    }
-    if (source.length > 8000000) {
-      return res.status(400).json({ success: false, error: 'Source too large' });
-    }
-    if (!findLua()) {
-      return res.status(500).json({ success: false, error: 'lua5.1 no encontrado — Runtime DOCKER' });
+    const source = (req.body && req.body.source) || (req.body && req.body.code) || '';
+    const mode = String((req.body && req.body.mode) || 'max').toLowerCase();
+    const antiTamper = (req.body && req.body.antiTamper) !== false;
+    if (!source || !String(source).trim()) {
+      return res.status(400).json({ success: false, error: 'source vacío' });
     }
 
     const id = crypto.randomBytes(12).toString('hex');
     const dir = path.join(JOB_ROOT, id);
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'in.lua'), String(source), 'utf8');
-
-    const opts = { antiTamper: true, mode: 'max' };
-    if (req.body && req.body.antiTamper === false) opts.antiTamper = false;
-
-    // Write meta BEFORE responding so poll never 404s
     writeMeta(id, {
-      id,
       status: 'queued',
-      progress: 2,
+      progress: 1,
       stage: 'queued',
-      createdAt: Date.now(),
-      opts,
-      error: null,
-      logLine: 'Job creado · esperando worker'
+      originalSize: String(source).length,
+      mode,
+      antiTamper,
+      logLine: 'Job creado (Pure Node)'
     });
 
-    const workerJs = path.join(__dirname, 'worker.js');
-    const child = spawn(process.execPath, [workerJs, dir], {
+    const workerPath = path.join(__dirname, 'worker.js');
+    const child = spawn(process.execPath, [workerPath, id, dir], {
       cwd: __dirname,
-      env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
-      detached: false
+      env: Object.assign({}, process.env, {
+        QYREX_JOB_ID: id,
+        QYREX_JOB_DIR: dir,
+        QYREX_MODE: mode,
+        QYREX_ANTITAMPER: antiTamper ? '1' : '0'
+      })
     });
     children.set(id, child);
-    writeMeta(id, { status: 'running', progress: 4, stage: 'spawn', pid: child.pid, logLine: 'Worker PID ' + child.pid });
 
-    // Parent heartbeat while child blocked in lua — UI keeps moving past 88
-    const beat = setInterval(() => {
-      const m = readMeta(id);
-      if (!m || m.status === 'done' || m.status === 'error') {
-        clearInterval(beat);
-        return;
-      }
-      // Worker muerto sin marcar done/error
-      try {
-        if (child.killed || (child.exitCode !== null && child.exitCode !== undefined)) {
-          // exit handler will clean; skip
-        } else if (m.pid) {
-          try { process.kill(m.pid, 0); } catch (_) {
-            writeMeta(id, {
-              status: 'error',
-              progress: 100,
-              stage: 'error',
-              error: 'Worker murió sin terminar (OOM o kill del host)',
-              logLine: 'Worker PID muerto'
-            });
-            clearInterval(beat);
-            return;
-          }
-        }
-      } catch (_) {}
-
-      let p = typeof m.progress === 'number' ? m.progress : 4;
-      // Sube hasta 97 mientras sigue vivo (nunca 100 hasta done real)
-      if (p < 88) p += 1;
-      else if (p < 97) p += 0.25;
-      p = Math.min(97, Math.round(p * 100) / 100);
-
-      const elapsed = Date.now() - (m.createdAt || Date.now());
-      const sec = Math.round(elapsed / 1000);
-      const stage = m.stage || 'running';
-      let hint = m.lastLog || '';
-      if (stage === 'prometheus' || /prometheus/i.test(String(m.lastLog || ''))) {
-        hint = 'Prometheus trabajando · ' + sec + 's (puede tardar 1–3 min)';
-      } else if (stage === 'hercules') {
-        hint = 'Hercules · ' + sec + 's';
-      } else if (stage === 'ironbrew2') {
-        hint = 'IronBrew2 · ' + sec + 's';
-      } else if (p >= 88) {
-        hint = 'Sigue procesando · ' + sec + 's (no está trabado)';
-      }
-
-      writeMeta(id, {
-        progress: p,
-        elapsedMs: elapsed,
-        heartbeat: Date.now(),
-        logLine: hint
-      });
-    }, 2000);
-
-    child.stdout.on('data', (b) => {
-      const line = String(b).trim();
-      if (line) console.log('[w ' + id.slice(0, 8) + ']', line);
-    });
-    child.stderr.on('data', (b) => {
-      const line = stripAnsi(String(b).trim());
-      if (!line) return;
-      console.error('[w ' + id.slice(0, 8) + ']', line);
-      writeMeta(id, { logLine: line.slice(0, 240) });
-    });
+    let stderrBuf = '';
+    child.stderr.on('data', (d) => { stderrBuf += String(d).slice(0, 4000); });
     child.on('exit', (code) => {
-      clearInterval(beat);
       children.delete(id);
       const m = readMeta(id) || {};
-      if (m.status !== 'done' && m.status !== 'error') {
+      if (code !== 0 && m.status !== 'done') {
         writeMeta(id, {
-          status: code === 0 ? 'done' : 'error',
+          status: 'error',
           progress: 100,
-          stage: code === 0 ? 'done' : 'error',
-          error: code === 0 ? null : ('Worker exit ' + code),
+          stage: 'error',
+          error: stripAnsi(stderrBuf || ('worker exit ' + code)).slice(0, 1500),
           logLine: 'Worker exit ' + code
         });
       }
-      console.log('[w ' + id.slice(0, 8) + '] exit', code);
     });
 
-    return res.status(202).json({ success: true, async: true, jobId: id, status: 'queued', mode: 'max' });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: stripAnsi(err && err.message) || 'fail' });
+    res.json({
+      success: true,
+      async: true,
+      jobId: id,
+      status: 'queued',
+      progress: 1,
+      stage: 'queued',
+      mode,
+      pureNode: true
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message || 'Error' });
   }
 });
 
-app.get('/job/:id', requireKey, (req, res) => {
-  const id = String(req.params.id || '').trim();
+app.post('/obfuscate/sync', requireKey, (req, res) => {
+  try {
+    const source = (req.body && req.body.source) || (req.body && req.body.code) || '';
+    const mode = String((req.body && req.body.mode) || 'max').toLowerCase();
+    const antiTamper = (req.body && req.body.antiTamper) !== false;
+    if (!source || !String(source).trim()) {
+      return res.status(400).json({ success: false, error: 'source vacío' });
+    }
+    const t0 = Date.now();
+    const result = obfuscate(String(source), { mode, antiTamper });
+    res.json({
+      success: true,
+      status: 'done',
+      progress: 100,
+      product: 'QyrexOBF PureNode v3',
+      timeMs: Date.now() - t0,
+      originalSize: String(source).length,
+      obfuscatedSize: (result.code || '').length,
+      steps: result.steps,
+      antiTamper: !!result.antiTamper,
+      mode: result.mode,
+      pureNode: true,
+      code: result.code
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message || 'Error' });
+  }
+});
+
+app.get('/job/:id', (req, res) => {
+  const id = String(req.params.id || '').replace(/[^a-f0-9]/gi, '');
   const m = readMeta(id);
   if (!m) {
     return res.status(404).json({
       success: false,
       status: 'missing',
-      error: 'Job no encontrado. Vuelve a Ofuscar (¿redeploy a mitad?).',
+      error: 'Job no encontrado. Vuelve a Ofuscar.',
       lookedFor: id
     });
   }
@@ -243,13 +210,14 @@ app.get('/job/:id', requireKey, (req, res) => {
       status: 'done',
       progress: 100,
       stage: 'done',
-      product: 'QyrexOBF v2',
+      product: 'QyrexOBF PureNode v3',
       timeMs: m.elapsedMs || elapsedMs,
       originalSize: m.originalSize,
       obfuscatedSize: m.obfuscatedSize || code.length,
       steps: m.steps || null,
       antiTamper: !!m.antiTamper,
-      mode: 'max',
+      mode: m.mode || 'max',
+      pureNode: true,
       logs: m.logs || [],
       code
     });
@@ -277,20 +245,20 @@ app.get('/job/:id', requireKey, (req, res) => {
     logs: m.logs || [],
     lastLog: m.lastLog || null,
     elapsedMs,
-    mode: 'max'
+    mode: m.mode || 'max',
+    pureNode: true
   });
 });
 
 app.get('/', (req, res) => {
   const indexPath = path.join(__dirname, 'index.html');
   if (fs.existsSync(indexPath)) return res.sendFile(indexPath);
-  res.json({ product: 'QyrexOBF v2' });
+  res.json({ product: 'QyrexOBF PureNode v3' });
 });
 
 app.use((req, res) => res.status(404).json({ success: false, error: 'Not found' }));
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log('QyrexOBF MAX on', PORT, 'jobs=', JOB_ROOT);
-  console.log('lua', findLua());
-  try { getRoot(); console.log('engines ok'); } catch (e) { console.error('engines', e.message); }
+  console.log('QyrexOBF PureNode v3 on', PORT, 'jobs=', JOB_ROOT);
+  console.log('engine: pure Node (no lua binaries required)');
 });

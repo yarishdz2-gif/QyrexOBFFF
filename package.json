@@ -1,10 +1,11 @@
 {
   "name": "qyrex-obf",
-  "version": "2.2.0",
-  "description": "QyrexOBF v2.2 MAX — hardened AntiTamper v3 + Prometheus Strong + Hercules + IronBrew2 (configurable modes)",
+  "version": "3.0.0",
+  "description": "QyrexOBF PureNode v3 — same files, 100% Node.js (no lua binaries)",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node -e \"const {obfuscate}=require('./obfuscate'); const r=obfuscate('print(1)',{mode:'max'}); console.log(r.steps.join(' → '));\""
   },
   "engines": { "node": ">=18" },
   "dependencies": {
