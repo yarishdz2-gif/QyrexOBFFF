@@ -1,7 +1,8 @@
 'use strict';
 /**
- * QyrexOBF Pure Node — XOR + messy VM, multi-line, FIXED bootstrap
- * Bugfix: return({...})["x"]() did NOT pass the table → y was nil
+ * QyrexOBF Pure Node — Luau (Roblox) target
+ * XOR pack + messy VM look + safe AT
+ * No setfenv/getfenv (Luau). Uses bit32.
  */
 
 const crypto = require('crypto');
@@ -30,7 +31,7 @@ function xorEncode(str, key) {
   return out;
 }
 
-function minifyLua(s) {
+function minifyLuau(s) {
   return String(s)
     .replace(/--\[\[[\s\S]*?\]\]/g, '')
     .replace(/--[^\n]*/g, '')
@@ -40,15 +41,17 @@ function minifyLua(s) {
     .trim();
 }
 
+// Safe AT for Luau executors (does NOT ban syn/getgenv/krnl/etc.)
 function buildAntiTamper() {
-  // SAFE: no executor bans
   return [
     'do',
     '  local function _crash() local t while true do t={t} end end',
-    '  local G=_G or (getfenv and getfenv(0)) or {}',
+    '  local G=getfenv and getfenv(0) or _G or {}',
     '  local BAD={"lune","lute","wally","rojo","selene","darklua","remodel","tarmac","stylua","lemur","busted","process","window","document","navigator","localStorage","globalThis","__dirname","__filename","js"}',
-    '  for i=1,#BAD do if rawget(G,BAD[i])~=nil then _crash() end end',
-    '  if type(G.process)=="table" and (G.process.env or G.process.platform) then _crash() end',
+    '  for i=1,#BAD do',
+    '    if rawget(G,BAD[i])~=nil then _crash() end',
+    '  end',
+    '  if type(rawget(G,"process"))=="table" then _crash() end',
     '  if string.byte("A")~=65 or math.floor(3.9)~=3 then _crash() end',
     '  do local n=0/0 if n==n then _crash() end end',
     'end'
@@ -78,86 +81,78 @@ function buildPacked(source) {
 
   const lines = [];
   lines.push('-- This file was protected using Qyrex Obfuscator v11.2 [https://qyrex.hopto.org/]');
-  lines.push('local _Q={');
+  lines.push('-- Target: Luau (Roblox)');
+  lines.push('local _Q = {');
 
-  // helpers (multi-line, messy)
-  lines.push(`  ${N.rot}=bit32 and bit32.rrotate or function(a,b)`);
-  lines.push(`    b=b%32 local c=4294967296 a=a%c local d=2^b`);
-  lines.push(`    return((a-a%d)/d+(a*2^(32-b))%c)%c`);
-  lines.push(`  end,`);
+  // bit32 is always present in Roblox Luau
+  lines.push(`  ${N.rot} = bit32.rrotate,`);
 
-  lines.push(`  ${N.dec}=function(self,C,f)`);
-  lines.push(`    local bxor=bit32 and bit32.bxor or function(a,b)`);
-  lines.push(`      local r,v=0,1`);
-  lines.push(`      while a>0 or b>0 do`);
-  lines.push(`        local ab,bb=a%2,b%2`);
-  lines.push(`        if ab~=bb then r=r+v end`);
-  lines.push(`        a,b,v=(a-ab)/2,(b-bb)/2,v*2`);
-  lines.push(`      end`);
-  lines.push(`      return r`);
-  lines.push(`    end`);
-  lines.push(`    local l={}`);
-  lines.push(`    for I=1,#C do`);
-  lines.push(`      local M=(f*((I%11)+1)+I*7+(f%31))%256`);
-  lines.push(`      l[I]=string.char(bxor(C[I],M))`);
+  // XOR decrypt using bit32.bxor (Luau)
+  lines.push(`  ${N.dec} = function(self, C, f)`);
+  lines.push(`    local l = {}`);
+  lines.push(`    for I = 1, #C do`);
+  lines.push(`      local M = (f * ((I % 11) + 1) + I * 7 + (f % 31)) % 256`);
+  lines.push(`      l[I] = string.char(bit32.bxor(C[I], M))`);
   lines.push(`    end`);
   lines.push(`    return table.concat(l)`);
   lines.push(`  end,`);
 
-  lines.push(`  ${N.set}=function(self,y,C,f) y[C]=C-f end,`);
+  lines.push(`  ${N.set} = function(self, y, C, f) y[C] = C - f end,`);
 
-  lines.push(`  ${N.get}=function(self,C,f,l,I,M)`);
+  lines.push(`  ${N.get} = function(self, C, f, l, I, M)`);
   lines.push(`    local c`);
-  lines.push(`    if M<=0X5f then`);
-  lines.push(`      if not(M<0x5f) then else end`);
+  lines.push(`    if M <= 0x5f then`);
+  lines.push(`      if not (M < 0x5f) then else end`);
   lines.push(`    else`);
-  lines.push(`      c,C,f,l=self.${N.wrap}(M,I,f,l,C)`);
-  lines.push(`      if c==${toLuaNum(rndInt(20000, 50000))} then`);
-  lines.push(`        return C,l,${toLuaNum(rndInt(10000, 40000))},f`);
-  lines.push(`      else`);
-  lines.push(`        if c~=${toLuaNum(rndInt(10000, 40000))} then else return C,l,${toLuaNum(rndInt(10000, 40000))},f end`);
+  lines.push(`      c, C, f, l = self.${N.wrap}(M, I, f, l, C)`);
+  lines.push(`      if c == ${toLuaNum(rndInt(20000, 50000))} then`);
+  lines.push(`        return C, l, ${toLuaNum(rndInt(10000, 40000))}, f`);
+  lines.push(`      elseif c == ${toLuaNum(rndInt(10000, 40000))} then`);
+  lines.push(`        return C, l, ${toLuaNum(rndInt(10000, 40000))}, f`);
   lines.push(`      end`);
   lines.push(`    end`);
-  lines.push(`    return C,l,nil,f`);
+  lines.push(`    return C, l, nil, f`);
   lines.push(`  end,`);
 
-  lines.push(`  ${N.load}=function(self,y,C,f,l)`);
-  lines.push(`    (C[${toLuaNum(rndInt(1, 9))}])[f+1]=y`);
-  lines.push(`    l=${toLuaNum(rndInt(0x40, 0xff))}`);
-  lines.push(`    return l`);
+  lines.push(`  ${N.load} = function(self, y, C, f, l)`);
+  lines.push(`    C[${toLuaNum(rndInt(1, 9))}][f + 1] = y`);
+  lines.push(`    return ${toLuaNum(rndInt(0x40, 0xff))}`);
   lines.push(`  end,`);
 
-  lines.push(`  ${N.ep}=function(self,y,C) y=C[${toLuaNum(rndInt(20, 45))}]() return y end,`);
+  lines.push(`  ${N.ep} = function(self, y, C)`);
+  lines.push(`    return C[${toLuaNum(rndInt(20, 45))}]()`);
+  lines.push(`  end,`);
 
-  // payload chunks
   const chunkNames = [];
   for (let i = 0; i < chunks.length; i++) {
     const cn = rndHexName() + i;
     chunkNames.push(cn);
-    lines.push(`  ${cn}={${chunks[i].map(toLuaNum).join(',')}},`);
+    lines.push(`  ${cn} = {${chunks[i].map(toLuaNum).join(',')}},`);
   }
 
-  lines.push(`  ${N.wrap}=function(self,C,f,l,I)`);
-  lines.push(`    return ${toLuaNum(rndInt(10000, 50000))},C,f,l`);
+  lines.push(`  ${N.wrap} = function(self, C, f, l, I)`);
+  lines.push(`    return ${toLuaNum(rndInt(10000, 50000))}, C, f, l`);
   lines.push(`  end,`);
 
-  // runner
-  lines.push(`  ${N.run}=function(self)`);
-  lines.push(`    local C={}`);
-  lines.push(`    local f=${key}`);
+  // runner — Luau: loadstring provided by executors; no setfenv
+  lines.push(`  ${N.run} = function(self)`);
+  lines.push(`    local C = {}`);
+  lines.push(`    local f = ${key}`);
   for (const cn of chunkNames) {
-    lines.push(`    for I=1,#self.${cn} do C[#C+1]=self.${cn}[I] end`);
+    lines.push(`    for I = 1, #self.${cn} do`);
+    lines.push(`      C[#C + 1] = self.${cn}[I]`);
+    lines.push(`    end`);
   }
-  lines.push(`    local l=self.${N.dec}(self,C,f)`);
-  lines.push(`    local ld=loadstring or load`);
-  lines.push(`    local M=ld(l)`);
-  lines.push(`    if not M then error("protected") end`);
-  lines.push(`    if setfenv and getfenv then pcall(setfenv,M,getfenv(0)) end`);
-  lines.push(`    return M()`);
+  lines.push(`    local src = self.${N.dec}(self, C, f)`);
+  lines.push(`    local fn = loadstring(src)`);
+  lines.push(`    if type(fn) ~= "function" then`);
+  lines.push(`      error("protected", 0)`);
+  lines.push(`    end`);
+  lines.push(`    return fn()`);
   lines.push(`  end`);
 
   lines.push('}');
-  // FIXED bootstrap: pass the table into the runner
+  // FIXED: pass table (no nil self)
   lines.push(`return _Q.${N.run}(_Q)`);
 
   return lines.join('\n');
@@ -168,12 +163,12 @@ function obfuscate(source, opts) {
   const mode = String(opts.mode || 'max').toLowerCase();
   const wantAT = opts.antiTamper !== false;
   const steps = [];
-  let src = minifyLua(String(source || ''));
+  let src = minifyLuau(String(source || ''));
 
   if (!src) {
     return {
       code: '-- This file was protected using Qyrex Obfuscator v11.2 [https://qyrex.hopto.org/]\nreturn nil',
-      engine: 'QyrexOBF-PureNode',
+      engine: 'QyrexOBF-PureNode-Luau',
       steps: ['empty'],
       antiTamper: false,
       mode
@@ -186,11 +181,11 @@ function obfuscate(source, opts) {
   }
 
   const code = buildPacked(src);
-  steps.push('XOR', 'VM-Pack');
+  steps.push('XOR', 'VM-Pack-Luau');
 
   return {
     code,
-    engine: 'QyrexOBF-PureNode',
+    engine: 'QyrexOBF-PureNode-Luau',
     steps,
     antiTamper: wantAT,
     mode
@@ -201,9 +196,9 @@ function getRoot() { return process.cwd(); }
 function findLua() { return null; }
 function findLua54() { return null; }
 function findLuac() { return null; }
-function runPrometheus() { throw new Error('Pure Node'); }
-function runHercules() { throw new Error('Pure Node'); }
-function runIB2() { throw new Error('Pure Node'); }
+function runPrometheus() { throw new Error('Pure Node Luau build'); }
+function runHercules() { throw new Error('Pure Node Luau build'); }
+function runIB2() { throw new Error('Pure Node Luau build'); }
 
 module.exports = {
   obfuscate,
